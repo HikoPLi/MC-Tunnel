@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/HikoPLi/MC-Tunnel?logo=github)](https://github.com/HikoPLi/MC-Tunnel/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Cross-platform desktop UI for running a Cloudflare Access TCP tunnel to a local Minecraft server with strict validation and safety controls. In 30 seconds: install dependencies, start the app, create a profile, and run a secure tunnel with preflight safety checks.
+Cross-platform desktop UI for running a Cloudflare Access TCP tunnel to a local Minecraft server with strict validation and safety controls. Install dependencies, start the app, create a profile, and run a secure tunnel with preflight safety checks.
 
 ## Highlights
 - Profiles, saved links, and explicit settings (no auto-filled hostname or local bind)
@@ -31,7 +31,7 @@ Cross-platform desktop UI for running a Cloudflare Access TCP tunnel to a local 
 - Node.js 18+
 - npm or pnpm
 
-## Quick start (30 seconds)
+## Quick start
 ```bash
 npm install
 npm run start
@@ -82,7 +82,9 @@ npm run start
 ## Contributing
 - Issues/PRs welcome. Please open a small, focused PR with a clear description.
 - Run `npm test` before submitting. For UI changes, attach a short GIF/screenshot.
-- Suggested topics to add on GitHub for discoverability: `minecraft`, `cloudflare-tunnel`, `electron`, `desktop-app`, `server-admin`, `macos`, `arm64`, `windows`, `linux`.
+
+## Maintainer notes
+- Suggested GitHub topics for discoverability: `minecraft`, `cloudflare-tunnel`, `electron`, `desktop-app`, `server-admin`, `macos`, `arm64`, `windows`, `linux`.
 
 ## License
 MIT License. See LICENSE.
