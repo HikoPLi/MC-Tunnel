@@ -143,6 +143,39 @@ function parseChecksumText(text) {
   return parts[0] || null;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function extractSingleHash(text) {
+  const matches = text.match(/[a-fA-F0-9]{64}/g) || [];
+  if (matches.length === 1) return matches[0];
+  return null;
+}
+
+function extractChecksumForAsset(text, assetName) {
+  if (!text || !assetName) return null;
+  const name = escapeRegExp(assetName);
+  const patterns = [
+    new RegExp(`${name}\\s*[:=]\\s*([a-fA-F0-9]{64})`, 'i'),
+    new RegExp(`([a-fA-F0-9]{64})\\s+\\*?${name}\\b`, 'i'),
+    new RegExp(`SHA256\\s*\\(\\s*${name}\\s*\\)\\s*=\\s*([a-fA-F0-9]{64})`, 'i')
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return match[1];
+  }
+
+  return extractSingleHash(text);
+}
+
+function extractDigestHash(asset) {
+  if (!asset || !asset.digest) return null;
+  const match = String(asset.digest).match(/^sha256:([a-fA-F0-9]{64})$/);
+  return match ? match[1] : null;
+}
+
 function selectAsset(assets) {
   const platform = process.platform;
   const arch = process.arch;
@@ -225,27 +258,44 @@ async function installCloudflared(installDir, options = {}) {
     const tmpPath = path.join(installDir, asset.name);
     await downloadToFile(asset.browser_download_url, tmpPath, onLog);
 
-    const checksumAsset = findChecksumAsset(assets, asset.name);
-    if (checksumAsset) {
-      logLine(onLog, 'Verifying checksum...');
-      const checksumTextPath = path.join(installDir, checksumAsset.name);
-      await downloadToFile(checksumAsset.browser_download_url, checksumTextPath, onLog);
-      const checksumText = fs.readFileSync(checksumTextPath, 'utf8');
-      const expectedHash = parseChecksumText(checksumText);
-      const actualHash = await sha256File(tmpPath);
-      if (expectedHash && expectedHash.toLowerCase() !== actualHash.toLowerCase()) {
-        return { ok: false, error: 'Checksum verification failed' };
+    let expectedHash = extractDigestHash(asset);
+    if (expectedHash) {
+      logLine(onLog, 'Verifying checksum (asset digest)...');
+    }
+
+    if (!expectedHash) {
+      const checksumAsset = findChecksumAsset(assets, asset.name);
+      if (checksumAsset) {
+        logLine(onLog, 'Verifying checksum (checksum asset)...');
+        const checksumTextPath = path.join(installDir, checksumAsset.name);
+        await downloadToFile(checksumAsset.browser_download_url, checksumTextPath, onLog);
+        const checksumText = fs.readFileSync(checksumTextPath, 'utf8');
+        expectedHash = extractChecksumForAsset(checksumText, asset.name) || parseChecksumText(checksumText);
+        try {
+          fs.unlinkSync(checksumTextPath);
+        } catch (_) {
+          // ignore cleanup errors
+        }
       }
-      try {
-        fs.unlinkSync(checksumTextPath);
-      } catch (_) {
-        // ignore cleanup errors
+    }
+
+    if (!expectedHash && release.body) {
+      expectedHash = extractChecksumForAsset(release.body, asset.name);
+      if (expectedHash) {
+        logLine(onLog, 'Verifying checksum (release body)...');
+      }
+    }
+
+    if (expectedHash) {
+      const actualHash = await sha256File(tmpPath);
+      if (expectedHash.toLowerCase() !== actualHash.toLowerCase()) {
+        return { ok: false, error: 'Checksum verification failed' };
       }
     } else {
       if (requireChecksum) {
-        return { ok: false, error: 'Checksum file not found for this asset' };
+        return { ok: false, error: 'Checksum not available for this asset' };
       }
-      logLine(onLog, 'Checksum file not found for this asset; skipping verification.');
+      logLine(onLog, 'Checksum not available for this asset; skipping verification.');
     }
 
     let binaryPath;
