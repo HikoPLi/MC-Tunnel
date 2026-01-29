@@ -1,6 +1,6 @@
 {
   "name": "mc-tunnel-ui",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Cross-platform UI for a Cloudflare Access TCP tunnel",
   "main": "src/main/main.js",
   "author": "",
@@ -20,6 +20,7 @@
   "build": {
     "appId": "dev.hiko.mctunnel",
     "productName": "MC Tunnel",
+    "icon": "src/renderer/assets/mc-tunnel_icon.png",
     "files": [
       "src/**/*",
       "package.json"

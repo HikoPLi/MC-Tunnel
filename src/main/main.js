@@ -7,6 +7,8 @@ const { probeCloudflared, installCloudflared } = require('./cloudflared');
 const { validateConfig, parseLocalBind } = require('./validation');
 const { checkPort } = require('./portcheck');
 const { startTunnel, stopTunnel, isRunning } = require('./tunnel');
+const { isZeroTrustUrl } = require('./zerotrust');
+const { findPortOwners, killPortOwners } = require('./portowner');
 
 let mainWindow = null;
 
@@ -22,6 +24,118 @@ function sendInstallLog(message) {
   }
 }
 
+function sendAuthUrl(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('tunnel:auth-url', payload);
+  }
+}
+
+function createZeroTrustHandler(settings) {
+  const opened = new Set();
+  const autoOpenEnabled = !settings || settings.autoOpenZeroTrust !== false;
+  return (url) => {
+    if (!isZeroTrustUrl(url)) return;
+    let autoOpened = false;
+    if (autoOpenEnabled && !opened.has(url)) {
+      opened.add(url);
+      autoOpened = true;
+      shell.openExternal(url);
+    }
+    sendAuthUrl({ url, autoOpened });
+  };
+}
+
+function formatOwnerLines(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return '';
+  return entries
+    .map((entry) => {
+      const label = entry.name ? ` (${entry.name})` : '';
+      return `PID ${entry.pid}${label}`;
+    })
+    .join('\n');
+}
+
+async function confirmKillPort(port, owners) {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const detailLines = formatOwnerLines(owners);
+  const detail = detailLines
+    ? `Detected processes:\n${detailLines}`
+    : 'Process details were not available.';
+
+  const first = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    title: 'Port in use',
+    message: `Port ${port} is already in use.`,
+    detail,
+    buttons: ['Cancel', 'Continue'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  });
+  if (first.response !== 1) return false;
+
+  const second = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    title: 'Confirm kill',
+    message: `This will terminate the process(es) using port ${port}.`,
+    detail: 'This can cause data loss or interrupt other applications.',
+    buttons: ['Cancel', 'Continue'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  });
+  if (second.response !== 1) return false;
+
+  const third = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    title: 'Final confirmation',
+    message: `Final confirmation: kill process(es) on port ${port}?`,
+    detail: 'This action cannot be undone.',
+    buttons: ['Cancel', 'Kill now'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  });
+  return third.response === 1;
+}
+
+async function ensurePortAvailable(bind, settings) {
+  const portStatus = await checkPort(bind.host, bind.port);
+  if (portStatus.ok) {
+    return { ok: true };
+  }
+
+  const canKill = settings && settings.allowPortKill && portStatus.code === 'EADDRINUSE';
+  if (!canKill) {
+    return { ok: false, error: portStatus.error, code: portStatus.code };
+  }
+
+  const owners = await findPortOwners(bind.port);
+  if (!owners.ok) {
+    return { ok: false, error: 'Port is already in use', details: owners.error || 'Failed to detect process owners' };
+  }
+  if (!Array.isArray(owners.entries) || owners.entries.length === 0) {
+    return { ok: false, error: 'Port is already in use', details: 'No process owners were detected for this port' };
+  }
+
+  const confirmed = await confirmKillPort(bind.port, owners.entries);
+  if (!confirmed) {
+    return { ok: false, error: 'Port is already in use' };
+  }
+
+  const killResult = await killPortOwners(owners.entries);
+  if (!killResult.ok) {
+    return { ok: false, error: 'Failed to terminate process using port', details: killResult.error };
+  }
+
+  const recheck = await checkPort(bind.host, bind.port);
+  if (!recheck.ok) {
+    return { ok: false, error: recheck.error || 'Port is still in use', code: recheck.code };
+  }
+
+  return { ok: true, killed: true };
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 980,
@@ -29,6 +143,7 @@ function createWindow() {
     minWidth: 860,
     minHeight: 640,
     backgroundColor: '#0e1116',
+    icon: path.join(__dirname, '../renderer/assets/mc-tunnel_icon.png'),
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
@@ -61,9 +176,9 @@ async function tryAutoStart() {
       sendStatus({ running: false, error: `Auto-start failed: ${bind.error}` });
       return;
     }
-    const portStatus = await checkPort(bind.host, bind.port);
+    const portStatus = await ensurePortAvailable(bind, config.settings);
     if (!portStatus.ok) {
-      sendStatus({ running: false, error: `Auto-start failed: ${portStatus.error}` });
+      sendStatus({ running: false, error: `Auto-start failed: ${portStatus.error}`, details: portStatus.details });
       return;
     }
   }
@@ -76,6 +191,7 @@ async function tryAutoStart() {
 
   const result = startTunnel({ ...profile, settings: config.settings }, {
     onLog: (line) => mainWindow && mainWindow.webContents.send('tunnel:log', line),
+    onAuthUrl: createZeroTrustHandler(config.settings),
     onExit: (info) => sendStatus({ running: false, ...info })
   });
 
@@ -135,9 +251,9 @@ ipcMain.handle('tunnel:start', async (_event, config) => {
     if (!bind.ok) {
       return { ok: false, error: bind.error };
     }
-    const portStatus = await checkPort(bind.host, bind.port);
+    const portStatus = await ensurePortAvailable(bind, settings);
     if (!portStatus.ok) {
-      return { ok: false, error: portStatus.error, code: portStatus.code };
+      return { ok: false, error: portStatus.error, code: portStatus.code, details: portStatus.details };
     }
   }
 
@@ -148,6 +264,7 @@ ipcMain.handle('tunnel:start', async (_event, config) => {
 
   const result = startTunnel({ ...config, settings }, {
     onLog: (line) => mainWindow && mainWindow.webContents.send('tunnel:log', line),
+    onAuthUrl: createZeroTrustHandler(settings),
     onExit: (info) => {
       sendStatus({ running: false, ...info });
     }
@@ -218,6 +335,15 @@ ipcMain.handle('log:open-dir', async (_event, logFile) => {
 ipcMain.handle('log:default-path', () => {
   return getDefaultLogFile();
 });
+
+ipcMain.handle('external:open', async (_event, url) => {
+  if (!isZeroTrustUrl(url)) {
+    return { ok: false, error: 'Invalid Zero Trust URL' };
+  }
+  await shell.openExternal(url);
+  return { ok: true };
+});
+
 
 ipcMain.handle('config:export', async () => {
   const config = loadConfig();

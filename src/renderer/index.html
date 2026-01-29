@@ -113,6 +113,10 @@
             <span>Check port availability before start</span>
           </label>
           <label class="check">
+            <input id="allowPortKill" type="checkbox" />
+            <span>Allow killing process if port is in use (asks 3 times)</span>
+          </label>
+          <label class="check">
             <input id="rotateLogs" type="checkbox" />
             <span>Rotate logs when oversized</span>
           </label>
@@ -127,6 +131,10 @@
           <label class="check">
             <input id="requireChecksum" type="checkbox" />
             <span>Require checksum for cloudflared download</span>
+          </label>
+          <label class="check">
+            <input id="autoOpenZeroTrust" type="checkbox" />
+            <span>Auto-open Zero Trust verification link</span>
           </label>
           <label class="check">
             <input id="autoStartTunnel" type="checkbox" />
@@ -155,6 +163,16 @@
         <div class="log-header">
           <h2>Live log</h2>
           <button id="clearLog" class="ghost">Clear</button>
+        </div>
+        <div id="zeroTrustNotice" class="note split hidden">
+          <div>
+            <div class="note-title">Zero Trust verification required</div>
+            <div id="zeroTrustUrl" class="note-url"></div>
+            <div id="zeroTrustHint" class="note-hint"></div>
+          </div>
+          <div class="actions">
+            <button id="openZeroTrust" class="ghost">Open verification</button>
+          </div>
         </div>
         <pre id="logOutput"></pre>
       </section>

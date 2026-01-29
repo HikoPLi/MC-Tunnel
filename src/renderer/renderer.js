@@ -14,10 +14,12 @@ const elements = {
   loadProfile: document.getElementById('loadProfile'),
   deleteProfile: document.getElementById('deleteProfile'),
   checkPortOnStart: document.getElementById('checkPortOnStart'),
+  allowPortKill: document.getElementById('allowPortKill'),
   rotateLogs: document.getElementById('rotateLogs'),
   maxLogSize: document.getElementById('maxLogSize'),
   maxLogBackups: document.getElementById('maxLogBackups'),
   requireChecksum: document.getElementById('requireChecksum'),
+  autoOpenZeroTrust: document.getElementById('autoOpenZeroTrust'),
   autoStartTunnel: document.getElementById('autoStartTunnel'),
   saveSettings: document.getElementById('saveSettings'),
   startBtn: document.getElementById('startBtn'),
@@ -37,6 +39,10 @@ const elements = {
   tunnelStatus: document.getElementById('tunnelStatus'),
   cloudflaredStatus: document.getElementById('cloudflaredStatus'),
   appVersion: document.getElementById('appVersion'),
+  zeroTrustNotice: document.getElementById('zeroTrustNotice'),
+  zeroTrustUrl: document.getElementById('zeroTrustUrl'),
+  zeroTrustHint: document.getElementById('zeroTrustHint'),
+  openZeroTrust: document.getElementById('openZeroTrust'),
   logOutput: document.getElementById('logOutput')
 };
 
@@ -44,6 +50,7 @@ let logBuffer = [];
 let savedLinks = [];
 let profiles = [];
 let activeProfileId = '';
+let zeroTrustUrl = '';
 
 function generateId() {
   if (window.crypto && typeof window.crypto.randomUUID === 'function') {
@@ -55,12 +62,14 @@ function generateId() {
 function applySettings(settings) {
   const safe = settings || {};
   elements.checkPortOnStart.checked = Boolean(safe.checkPortOnStart);
+  elements.allowPortKill.checked = Boolean(safe.allowPortKill);
   elements.rotateLogs.checked = Boolean(safe.rotateLogs);
   const size = Number(safe.maxLogSizeMB);
   elements.maxLogSize.value = Number.isFinite(size) && size > 0 ? String(size) : '5';
   const backups = Number(safe.maxLogBackups);
   elements.maxLogBackups.value = Number.isFinite(backups) && backups > 0 ? String(backups) : '3';
   elements.requireChecksum.checked = safe.requireChecksum !== false;
+  elements.autoOpenZeroTrust.checked = safe.autoOpenZeroTrust !== false;
   elements.autoStartTunnel.checked = Boolean(safe.autoStartTunnel);
 }
 
@@ -69,10 +78,12 @@ function collectSettings() {
   const maxBackups = Number(elements.maxLogBackups.value);
   return {
     checkPortOnStart: elements.checkPortOnStart.checked,
+    allowPortKill: elements.allowPortKill.checked,
     rotateLogs: elements.rotateLogs.checked,
     maxLogSizeMB: Number.isFinite(maxSize) && maxSize > 0 ? Math.floor(maxSize) : 5,
     maxLogBackups: Number.isFinite(maxBackups) && maxBackups > 0 ? Math.floor(maxBackups) : 3,
     requireChecksum: elements.requireChecksum.checked,
+    autoOpenZeroTrust: elements.autoOpenZeroTrust.checked,
     autoStartTunnel: elements.autoStartTunnel.checked
   };
 }
@@ -117,6 +128,21 @@ function appendLog(line) {
   }
   elements.logOutput.textContent = logBuffer.join('');
   elements.logOutput.scrollTop = elements.logOutput.scrollHeight;
+}
+
+function setZeroTrustNotice(url, autoOpened) {
+  zeroTrustUrl = String(url || '').trim();
+  if (!zeroTrustUrl) {
+    elements.zeroTrustNotice.classList.add('hidden');
+    elements.zeroTrustUrl.textContent = '';
+    elements.zeroTrustHint.textContent = '';
+    return;
+  }
+  elements.zeroTrustNotice.classList.remove('hidden');
+  elements.zeroTrustUrl.textContent = zeroTrustUrl;
+  elements.zeroTrustHint.textContent = autoOpened
+    ? 'Browser opened automatically. Complete verification, then keep the tunnel running.'
+    : 'Open the link to complete verification, then keep the tunnel running.';
 }
 
 function sanitizeSavedLinks(list) {
@@ -259,6 +285,7 @@ window.api.onStatus((status) => {
   } else {
     setTunnelStatus('Tunnel: stopped', status.error ? 'error' : 'idle');
     setRunningState(false);
+    setZeroTrustNotice('');
     if (status.error) {
       appendLog(`Status error: ${status.error}\n`);
     } else {
@@ -273,7 +300,15 @@ window.api.onInstallLog((message) => {
   }
 });
 
+window.api.onAuthUrl((payload) => {
+  const url = payload && payload.url ? String(payload.url).trim() : '';
+  if (!url || !url.includes('/cdn-cgi/access/')) return;
+  setZeroTrustNotice(url, payload.autoOpened);
+  appendLog('Zero Trust verification required.\n');
+});
+
 elements.startBtn.addEventListener('click', async () => {
+  setZeroTrustNotice('');
   const config = collectConfig();
   if (!config.hostname || !config.localBind || !config.logLevel || !config.logFile) {
     appendLog('Start failed: hostname, local bind, log level, and log file are required.\n');
@@ -396,6 +431,14 @@ elements.exportConfigBtn.addEventListener('click', async () => {
 elements.clearLog.addEventListener('click', () => {
   logBuffer = [];
   elements.logOutput.textContent = '';
+});
+
+elements.openZeroTrust.addEventListener('click', async () => {
+  if (!zeroTrustUrl) return;
+  const result = await window.api.openExternal(zeroTrustUrl);
+  if (result && result.ok === false) {
+    appendLog(`Open verification failed: ${result.error || 'unknown error'}\n`);
+  }
 });
 
 elements.saveLink.addEventListener('click', async () => {

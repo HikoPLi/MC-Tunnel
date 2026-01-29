@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { extractZeroTrustUrls } = require('./zerotrust');
 
 let tunnelProcess = null;
 let logStream = null;
@@ -90,12 +91,28 @@ function startTunnel(config, handlers) {
   logStream = fs.createWriteStream(config.logFile, { flags: 'a' });
   writeHeader(config);
 
+  let authBuffer = '';
+  const authUrls = new Set();
+  const maxAuthBuffer = 4096;
+
+  const handleAuthUrls = (text) => {
+    if (!handlers || !handlers.onAuthUrl) return;
+    authBuffer = (authBuffer + text).slice(-maxAuthBuffer);
+    const found = extractZeroTrustUrls(authBuffer);
+    found.forEach((url) => {
+      if (authUrls.has(url)) return;
+      authUrls.add(url);
+      handlers.onAuthUrl(url);
+    });
+  };
+
   const args = buildArgs(config);
   const proc = spawn(exePath, args, { windowsHide: true });
   tunnelProcess = proc;
 
   const onData = (chunk) => {
     const text = chunk.toString();
+    handleAuthUrls(text);
     if (logStream) logStream.write(text);
     if (handlers && handlers.onLog) handlers.onLog(text);
   };

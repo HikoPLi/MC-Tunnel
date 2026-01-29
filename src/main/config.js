@@ -8,7 +8,9 @@ const DEFAULT_SETTINGS = {
   maxLogSizeMB: 5,
   maxLogBackups: 3,
   requireChecksum: true,
-  autoStartTunnel: false
+  autoStartTunnel: false,
+  autoOpenZeroTrust: true,
+  allowPortKill: false
 };
 
 function ensureDir(dirPath) {

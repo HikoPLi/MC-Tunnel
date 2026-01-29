@@ -17,7 +17,9 @@ contextBridge.exposeInMainWorld('api', {
   openLogDir: (logFile) => ipcRenderer.invoke('log:open-dir', logFile),
   getDefaultLogFile: () => ipcRenderer.invoke('log:default-path'),
   openConfigDir: () => ipcRenderer.invoke('config:open-dir'),
+  openExternal: (url) => ipcRenderer.invoke('external:open', url),
   onLog: (callback) => ipcRenderer.on('tunnel:log', (_event, line) => callback(line)),
   onStatus: (callback) => ipcRenderer.on('tunnel:status', (_event, status) => callback(status)),
-  onInstallLog: (callback) => ipcRenderer.on('cloudflared:install-log', (_event, message) => callback(message))
+  onInstallLog: (callback) => ipcRenderer.on('cloudflared:install-log', (_event, message) => callback(message)),
+  onAuthUrl: (callback) => ipcRenderer.on('tunnel:auth-url', (_event, payload) => callback(payload))
 });
