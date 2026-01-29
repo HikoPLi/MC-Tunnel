@@ -16,14 +16,13 @@ Cross-platform desktop UI for running a Cloudflare Access TCP tunnel to a local 
 ## Table of contents
 - Requirements
 - Quick start
-- Demo
 - Support matrix
 - Configuration model
 - Safety settings
 - Cloudflared
 - Logs
 - Build and release
-- Tests and CI
+- CI/CD
 - Contributing
 - License
 - Intellectual property and trademarks
@@ -40,10 +39,6 @@ npm run start
 1. Add a saved link (hostname + local bind), or create a full profile with log level/path.
 2. Run **Check** to verify your cloudflared binary, or **Install** to fetch the latest release.
 3. Click **Start** to launch the tunnel; the app prechecks port availability before binding.
-
-## Demo
-- Add a short GIF of start/check/install flows (recommend 8–12 seconds, <4 MB).
-- If hosting a live panel, link it here (e.g., read-only demo over VNC/recording).
 
 ## Support matrix
 | OS | CPU | Status |
@@ -79,18 +74,15 @@ npm run start
 - Semantic versioning; see [CHANGELOG](CHANGELOG.md). GitHub Releases include platform artifacts.
 
 ## CI/CD
+- Local tests: `npm test`.
 - CI runs tests on every PR and push to main/master.
 - Release builds run on tags (v*) and build Windows/macOS/Linux artifacts.
 - GitHub Actions workflows: .github/workflows/ci.yml and .github/workflows/release.yml
 
-## Tests and CI
-- npm test
-- GitHub Actions workflow: .github/workflows/ci.yml
-
 ## Contributing
 - Issues/PRs welcome. Please open a small, focused PR with a clear description.
 - Run `npm test` before submitting. For UI changes, attach a short GIF/screenshot.
-- Suggested topics to add on GitHub for discoverability: `minecraft`, `cloudflare-tunnel`, `electron`, `desktop-app`, `server-admin`, `paper`, `spigot`, `docker`, `macos`, `arm64`, `windows`, `linux`.
+- Suggested topics to add on GitHub for discoverability: `minecraft`, `cloudflare-tunnel`, `electron`, `desktop-app`, `server-admin`, `macos`, `arm64`, `windows`, `linux`.
 
 ## License
 MIT License. See LICENSE.
