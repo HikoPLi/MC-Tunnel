@@ -55,6 +55,11 @@ Cross-platform desktop UI for running a Cloudflare Access TCP tunnel to a local 
 - npm run pack
 - Code signing and auto-update are not configured by default; add them for production releases.
 
+## CI/CD
+- CI runs tests on every PR and push to main/master.
+- Release builds run on tags (v*) and build Windows/macOS/Linux artifacts.
+- GitHub Actions workflows: .github/workflows/ci.yml and .github/workflows/release.yml
+
 ## Tests and CI
 - npm test
 - GitHub Actions workflow: .github/workflows/ci.yml
