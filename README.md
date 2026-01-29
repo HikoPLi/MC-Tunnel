@@ -4,6 +4,7 @@ Cross-platform desktop UI for running a Cloudflare Access TCP tunnel to a local 
 
 ## Features
 - Start/stop a tunnel with a saved config
+- Save and reuse hostname/local bind pairs from the UI
 - Optional auto-install or manual path selection for cloudflared
 - Live log output with file persistence
 - Works on Windows, macOS, and Linux

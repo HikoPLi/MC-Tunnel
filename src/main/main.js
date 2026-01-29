@@ -1,7 +1,7 @@
 const path = require('path');
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 
-const { loadConfig, saveConfig, getDefaultLogFile } = require('./config');
+const { loadConfig, saveConfig } = require('./config');
 const { probeCloudflared, installCloudflared } = require('./cloudflared');
 const { startTunnel, stopTunnel, isRunning } = require('./tunnel');
 
@@ -120,12 +120,15 @@ ipcMain.handle('dialog:pick-cloudflared', async () => {
 });
 
 ipcMain.handle('dialog:pick-logfile', async () => {
-  const defaultPath = getDefaultLogFile();
-  const result = await dialog.showSaveDialog({
+  const config = loadConfig();
+  const options = {
     title: 'Select log file',
-    defaultPath,
     filters: [{ name: 'Log files', extensions: ['log', 'txt'] }]
-  });
+  };
+  if (config.logFile) {
+    options.defaultPath = config.logFile;
+  }
+  const result = await dialog.showSaveDialog(options);
 
   if (result.canceled || !result.filePath) return null;
   return result.filePath;
@@ -133,11 +136,16 @@ ipcMain.handle('dialog:pick-logfile', async () => {
 
 ipcMain.handle('log:open', async () => {
   const config = loadConfig();
-  return shell.openPath(config.logFile || getDefaultLogFile());
+  if (!config.logFile) {
+    return 'Log file is not set';
+  }
+  return shell.openPath(config.logFile);
 });
 
 ipcMain.handle('log:open-dir', async () => {
   const config = loadConfig();
-  const logFile = config.logFile || getDefaultLogFile();
-  return shell.openPath(path.dirname(logFile));
+  if (!config.logFile) {
+    return 'Log file is not set';
+  }
+  return shell.openPath(path.dirname(config.logFile));
 });

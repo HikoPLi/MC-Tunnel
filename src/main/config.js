@@ -12,12 +12,6 @@ function getConfigPath() {
   return path.join(app.getPath('userData'), 'config.json');
 }
 
-function getDefaultLogFile() {
-  const logDir = path.join(app.getPath('userData'), 'logs');
-  ensureDir(logDir);
-  return path.join(logDir, 'cloudflared-mc-tunnel.log');
-}
-
 function getDefaults() {
   return {
     hostname: '',
@@ -69,6 +63,5 @@ module.exports = {
   getDefaults,
   getConfigPath,
   loadConfig,
-  saveConfig,
-  getDefaultLogFile
+  saveConfig
 };
