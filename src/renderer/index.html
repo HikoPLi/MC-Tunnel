@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;" />
+    <title>MC Tunnel</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="backdrop"></div>
+    <div class="app">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Cloudflare Access TCP</p>
+          <h1>MC Tunnel</h1>
+          <p class="subtitle">Secure local Minecraft access, managed from one place.</p>
+        </div>
+        <div class="status-stack">
+          <span id="tunnelStatus" class="badge" data-status="idle">Tunnel: idle</span>
+          <span id="cloudflaredStatus" class="badge" data-status="unknown">cloudflared: unknown</span>
+        </div>
+      </header>
+
+      <section class="grid">
+        <div class="panel">
+          <h2>Connection</h2>
+          <label>
+            Hostname
+            <input id="hostname" type="text" placeholder="enter hostname" />
+          </label>
+          <label>
+            Local bind
+            <input id="localBind" type="text" placeholder="enter local bind" />
+          </label>
+          <label>
+            Log level
+            <select id="logLevel">
+              <option value="">Select log level</option>
+              <option value="debug">debug</option>
+              <option value="info">info</option>
+              <option value="warn">warn</option>
+              <option value="error">error</option>
+            </select>
+          </label>
+          <label>
+            Log file
+            <div class="row">
+              <input id="logFile" type="text" placeholder="select log file" />
+              <button id="browseLog" class="ghost">Browse</button>
+            </div>
+          </label>
+          <label>
+            Saved links
+            <div class="row">
+              <select id="savedLinks">
+                <option value="">No saved links</option>
+              </select>
+              <button id="saveLink" class="ghost">Save current</button>
+            </div>
+          </label>
+          <div class="actions">
+            <button id="loadLink" class="ghost">Load selected</button>
+            <button id="deleteLink" class="ghost">Delete selected</button>
+          </div>
+          <div class="note">Minecraft should connect to the address and port you set in Local bind on this machine.</div>
+        </div>
+
+        <div class="panel">
+          <h2>cloudflared</h2>
+          <label>
+            Binary path
+            <div class="row">
+              <input id="cloudflaredPath" type="text" placeholder="cloudflared (PATH)" />
+              <button id="browseCloudflared" class="ghost">Browse</button>
+            </div>
+          </label>
+          <div class="actions">
+            <button id="checkCloudflared" class="ghost">Check</button>
+            <button id="installCloudflared">Install or Update</button>
+          </div>
+          <div id="installStatus" class="note">Install status: waiting.</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="actions primary">
+          <button id="startBtn">Start tunnel</button>
+          <button id="stopBtn" class="ghost" disabled>Stop</button>
+          <button id="saveBtn" class="ghost">Save config</button>
+          <button id="openLogBtn" class="ghost">Open log</button>
+          <button id="openLogDirBtn" class="ghost">Open log folder</button>
+        </div>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="log-header">
+          <h2>Live log</h2>
+          <button id="clearLog" class="ghost">Clear</button>
+        </div>
+        <pre id="logOutput"></pre>
+      </section>
+    </div>
+
+    <script src="renderer.js" defer></script>
+  </body>
+</html>
