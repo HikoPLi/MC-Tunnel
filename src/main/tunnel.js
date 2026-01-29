@@ -5,6 +5,30 @@ const { spawn } = require('child_process');
 let tunnelProcess = null;
 let logStream = null;
 
+function rotateLogIfNeeded(logFile, settings) {
+  if (!settings || !settings.rotateLogs) return;
+  const maxSizeMB = Number(settings.maxLogSizeMB || 0);
+  const maxBackups = Number(settings.maxLogBackups || 0);
+  if (!maxSizeMB || maxSizeMB <= 0 || !maxBackups || maxBackups <= 0) return;
+
+  if (!fs.existsSync(logFile)) return;
+  const stats = fs.statSync(logFile);
+  if (stats.size <= maxSizeMB * 1024 * 1024) return;
+
+  for (let i = maxBackups; i >= 1; i -= 1) {
+    const src = i === 1 ? logFile : `${logFile}.${i - 1}`;
+    const dest = `${logFile}.${i}`;
+    if (fs.existsSync(src)) {
+      try {
+        if (fs.existsSync(dest)) fs.unlinkSync(dest);
+        fs.renameSync(src, dest);
+      } catch (_) {
+        // ignore rotation errors
+      }
+    }
+  }
+}
+
 function ensureDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
@@ -12,16 +36,19 @@ function ensureDir(dirPath) {
 }
 
 function buildArgs(config) {
-  return [
+  const args = [
     'access',
     'tcp',
     '--hostname',
     config.hostname,
     '--url',
-    config.localBind,
-    '--loglevel',
-    config.logLevel
+    config.localBind
   ];
+  const level = String(config.logLevel || '').trim();
+  if (level && level !== 'auto') {
+    args.push('--loglevel', level);
+  }
+  return args;
 }
 
 function writeHeader(config) {
@@ -45,12 +72,21 @@ function startTunnel(config, handlers) {
     return { ok: false, error: 'Hostname, local bind, log level, and log file are required' };
   }
 
+  try {
+    if (fs.existsSync(config.logFile) && fs.statSync(config.logFile).isDirectory()) {
+      return { ok: false, error: 'Log file path points to a directory' };
+    }
+  } catch (_) {
+    // ignore stat errors and let the stream fail if needed
+  }
+
   const exePath = config.cloudflaredPath && config.cloudflaredPath.trim()
     ? config.cloudflaredPath.trim()
     : 'cloudflared';
 
   const logDir = path.dirname(config.logFile);
   ensureDir(logDir);
+  rotateLogIfNeeded(config.logFile, config.settings);
   logStream = fs.createWriteStream(config.logFile, { flags: 'a' });
   writeHeader(config);
 

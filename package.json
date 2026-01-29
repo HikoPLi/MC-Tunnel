@@ -10,7 +10,8 @@
     "dev": "electron .",
     "pack": "electron-builder",
     "pack:dir": "electron-builder --dir",
-    "lint": "node -e \"console.log('lint: add your linter of choice')\""
+    "lint": "node -e \"console.log('lint: add your linter of choice')\"",
+    "test": "node tests/validation.test.js"
   },
   "devDependencies": {
     "electron": "^29.1.0",

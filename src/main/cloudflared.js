@@ -205,7 +205,9 @@ function findBinary(destDir) {
   return null;
 }
 
-async function installCloudflared(installDir, onLog) {
+async function installCloudflared(installDir, options = {}) {
+  const onLog = options.onLog;
+  const requireChecksum = options.requireChecksum !== false;
   try {
     fs.mkdirSync(installDir, { recursive: true });
     logLine(onLog, 'Fetching latest release info...');
@@ -240,6 +242,9 @@ async function installCloudflared(installDir, onLog) {
         // ignore cleanup errors
       }
     } else {
+      if (requireChecksum) {
+        return { ok: false, error: 'Checksum file not found for this asset' };
+      }
       logLine(onLog, 'Checksum file not found for this asset; skipping verification.');
     }
 

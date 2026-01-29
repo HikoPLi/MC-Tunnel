@@ -20,6 +20,7 @@
         <div class="status-stack">
           <span id="tunnelStatus" class="badge" data-status="idle">Tunnel: idle</span>
           <span id="cloudflaredStatus" class="badge" data-status="unknown">cloudflared: unknown</span>
+          <span id="appVersion" class="badge" data-status="info">app: --</span>
         </div>
       </header>
 
@@ -37,7 +38,7 @@
           <label>
             Log level
             <select id="logLevel">
-              <option value="">Select log level</option>
+              <option value="auto">auto (default)</option>
               <option value="debug">debug</option>
               <option value="info">info</option>
               <option value="warn">warn</option>
@@ -47,7 +48,7 @@
           <label>
             Log file
             <div class="row">
-              <input id="logFile" type="text" placeholder="select log file" />
+              <input id="logFile" type="text" placeholder="default log file will be used" />
               <button id="browseLog" class="ghost">Browse</button>
             </div>
           </label>
@@ -82,15 +83,71 @@
           </div>
           <div id="installStatus" class="note">Install status: waiting.</div>
         </div>
+
+        <div class="panel">
+          <h2>Profiles</h2>
+          <label>
+            Profile name
+            <input id="profileName" type="text" placeholder="enter profile name" />
+          </label>
+          <label>
+            Saved profiles
+            <div class="row">
+              <select id="profileSelect">
+                <option value="">No profiles</option>
+              </select>
+              <button id="saveProfile" class="ghost">Save profile</button>
+            </div>
+          </label>
+          <div class="actions">
+            <button id="loadProfile" class="ghost">Load selected</button>
+            <button id="deleteProfile" class="ghost">Delete selected</button>
+          </div>
+          <div class="note">Profiles store hostname, local bind, log settings, and cloudflared path.</div>
+        </div>
+
+        <div class="panel">
+          <h2>Safety & Preferences</h2>
+          <label class="check">
+            <input id="checkPortOnStart" type="checkbox" />
+            <span>Check port availability before start</span>
+          </label>
+          <label class="check">
+            <input id="rotateLogs" type="checkbox" />
+            <span>Rotate logs when oversized</span>
+          </label>
+          <label>
+            Max log size (MB)
+            <input id="maxLogSize" type="number" min="1" max="200" />
+          </label>
+          <label>
+            Max log backups
+            <input id="maxLogBackups" type="number" min="1" max="50" />
+          </label>
+          <label class="check">
+            <input id="requireChecksum" type="checkbox" />
+            <span>Require checksum for cloudflared download</span>
+          </label>
+          <label class="check">
+            <input id="autoStartTunnel" type="checkbox" />
+            <span>Auto-start tunnel on app launch (requires active profile)</span>
+          </label>
+          <div class="actions">
+            <button id="saveSettings" class="ghost">Save settings</button>
+          </div>
+        </div>
       </section>
 
       <section class="panel">
         <div class="actions primary">
           <button id="startBtn">Start tunnel</button>
           <button id="stopBtn" class="ghost" disabled>Stop</button>
-          <button id="saveBtn" class="ghost">Save config</button>
+          <button id="testPortBtn" class="ghost">Test port</button>
           <button id="openLogBtn" class="ghost">Open log</button>
           <button id="openLogDirBtn" class="ghost">Open log folder</button>
+          <button id="openConfigBtn" class="ghost">Open config folder</button>
+          <button id="importConfigBtn" class="ghost">Import config</button>
+          <button id="exportConfigBtn" class="ghost">Export config</button>
         </div>
       </section>
 

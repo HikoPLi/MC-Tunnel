@@ -108,6 +108,12 @@ h1 {
   color: var(--danger);
 }
 
+.badge[data-status="info"] {
+  background: rgba(34, 211, 238, 0.15);
+  border-color: rgba(34, 211, 238, 0.35);
+  color: var(--accent-2);
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -138,6 +144,18 @@ label {
   color: var(--muted);
 }
 
+label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+}
+
+label.check input {
+  width: 16px;
+  height: 16px;
+}
+
 input,
 select {
   background: rgba(15, 23, 42, 0.9);
@@ -162,6 +180,10 @@ select:focus {
 }
 
 .row input {
+  flex: 1;
+}
+
+.row select {
   flex: 1;
 }
 
