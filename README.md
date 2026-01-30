@@ -18,6 +18,27 @@ MC Tunnel UI 是一个跨平台桌面 UI，用于运行 Cloudflare Access TCP �
 ![Demo 1](demo.png)
 ![Demo 2](demo2.png)
 
+## 核心亮点
+|  |  |
+| --- | --- |
+| <img src="docs/images/feather/shield.svg" width="28" height="28" alt="安全"> <br> **安全优先**：不自动填充端点，关键操作需确认 | <img src="docs/images/feather/check-circle.svg" width="28" height="28" alt="预检"> <br> **预检与验证**：启动前检查端口、cloudflared 可用性 |
+| <img src="docs/images/feather/sliders.svg" width="28" height="28" alt="显式配置"> <br> **显式配置**：配置档/保存链接一目了然 | <img src="docs/images/feather/file-text.svg" width="28" height="28" alt="日志"> <br> **可追踪日志**：日志落盘、轮转与快速定位 |
+
+## 工作原理（简图）
+<p align="center">
+  <img src="docs/images/feather/server.svg" width="28" height="28" alt="服务器">
+  本地 MC 服务器
+  →
+  <img src="docs/images/feather/cloud.svg" width="28" height="28" alt="Cloudflare">
+  Cloudflare Access
+  →
+  <img src="docs/images/feather/monitor.svg" width="28" height="28" alt="客户端">
+  玩家客户端（本地 bind）
+</p>
+<p align="center">
+  MC Tunnel UI 在客户端启动 cloudflared access tcp，将远端服务映射为本地监听地址。
+</p>
+
 ## 一览
 - 显式配置的配置档与保存链接（不自动填充 hostname/bind）
 - 端口预检防止绑定失败
@@ -35,6 +56,12 @@ MC Tunnel UI 是一个跨平台桌面 UI，用于运行 Cloudflare Access TCP �
 ## 环境要求
 - Node.js 18+
 - npm 或 pnpm
+
+## 快速开始（普通用户）
+1. 从 GitHub Releases 下载与你系统匹配的安装包并安装。
+2. 打开应用，填写 Hostname 与 Local bind。
+3. 使用 Check/Install 确保 cloudflared 可用。
+4. 点击 Start，按提示完成 Access 认证，然后让 Minecraft 客户端连接到本地 bind。
 
 ## 快速开始（开发）
 ```bash
@@ -93,6 +120,14 @@ npm run start
 ## 贡献
 - 欢迎提交 Issues/PR。请保持 PR 聚焦并说明目的。
 - 提交前运行 `npm test`。UI 变更请附 GIF/截图。
+
+## 常见问题
+- **cloudflared 找不到或不可执行**：使用 Check 查看错误提示；必要时用 Install 重新安装。
+- **端口被占用**：开启端口预检并确认是否允许结束占用进程；或更换本地 bind 端口。
+- **Access 链接无法通过**：确认浏览器已登录允许的账号，并检查 Access 策略是否放行。
+
+## 图标来源
+- [Feather Icons](https://github.com/feathericons/feather)（MIT License）：用于核心亮点与简图中的图标。
 
 ## 许可证
 MIT License。详见 LICENSE。
