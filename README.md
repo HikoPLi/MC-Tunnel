@@ -31,6 +31,7 @@ MC Tunnel UI is a cross-platform Electron desktop app for running Cloudflare Acc
 - Per-connection runtime controls (`Start`/`Stop`) from a live connection list.
 - Incremental start: you can add and start more hosts while existing hosts are already running.
 - Optional auto-allocation of local binds when `local bind` is not provided.
+- App package update checker (GitHub Releases) with background mode, skip-version option, and explicit install prompt.
 - Preflight bind checks and optional process-kill confirmation flow for occupied ports.
 - Cloudflared lifecycle management:
   - Check configured binary.
@@ -58,6 +59,7 @@ MC Tunnel UI is a cross-platform Electron desktop app for running Cloudflare Acc
 - Port conflict handling is explicit and confirm-driven.
 - Destructive actions (killing occupying processes) require user confirmation.
 - Optional checksum enforcement for downloaded cloudflared assets.
+- Background app-update checks are opt-in and can be disabled in settings.
 
 ## Screenshots
 

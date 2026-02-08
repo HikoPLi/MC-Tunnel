@@ -1,6 +1,6 @@
 {
   "name": "mc-tunnel-ui",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "description": "Cross-platform UI for a Cloudflare Access TCP tunnel",
   "main": "src/main/main.js",
   "author": "",
@@ -30,13 +30,20 @@
     },
     "mac": {
       "category": "public.app-category.developer-tools",
-      "target": ["dmg"]
+      "target": [
+        "dmg"
+      ]
     },
     "win": {
-      "target": ["nsis"]
+      "target": [
+        "nsis"
+      ]
     },
     "linux": {
-      "target": ["AppImage", "deb"]
+      "target": [
+        "AppImage",
+        "deb"
+      ]
     }
   }
 }

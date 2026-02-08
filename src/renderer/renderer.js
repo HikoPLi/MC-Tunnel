@@ -21,6 +21,7 @@ const elements = {
   requireChecksum: document.getElementById('requireChecksum'),
   autoOpenZeroTrust: document.getElementById('autoOpenZeroTrust'),
   autoStartTunnel: document.getElementById('autoStartTunnel'),
+  autoCheckAppUpdate: document.getElementById('autoCheckAppUpdate'),
   saveSettings: document.getElementById('saveSettings'),
   startBtn: document.getElementById('startBtn'),
   stopBtn: document.getElementById('stopBtn'),
@@ -28,6 +29,7 @@ const elements = {
   openLogBtn: document.getElementById('openLogBtn'),
   openLogDirBtn: document.getElementById('openLogDirBtn'),
   openConfigBtn: document.getElementById('openConfigBtn'),
+  checkUpdateBtn: document.getElementById('checkUpdateBtn'),
   importConfigBtn: document.getElementById('importConfigBtn'),
   exportConfigBtn: document.getElementById('exportConfigBtn'),
   browseLog: document.getElementById('browseLog'),
@@ -38,6 +40,7 @@ const elements = {
   clearLog: document.getElementById('clearLog'),
   tunnelStatus: document.getElementById('tunnelStatus'),
   cloudflaredStatus: document.getElementById('cloudflaredStatus'),
+  updateStatus: document.getElementById('updateStatus'),
   appVersion: document.getElementById('appVersion'),
   connectionSummary: document.getElementById('connectionSummary'),
   connectionList: document.getElementById('connectionList'),
@@ -55,6 +58,7 @@ let activeProfileId = '';
 let zeroTrustUrl = '';
 let runtimeConnections = [];
 let startTunnelPending = false;
+let lastUpdateProgress = -1;
 
 function splitListInput(input) {
   return String(input || '')
@@ -89,6 +93,7 @@ function applySettings(settings) {
   elements.requireChecksum.checked = safe.requireChecksum !== false;
   elements.autoOpenZeroTrust.checked = safe.autoOpenZeroTrust !== false;
   elements.autoStartTunnel.checked = Boolean(safe.autoStartTunnel);
+  elements.autoCheckAppUpdate.checked = Boolean(safe.autoCheckAppUpdate);
 }
 
 function collectSettings() {
@@ -102,7 +107,8 @@ function collectSettings() {
     maxLogBackups: Number.isFinite(maxBackups) && maxBackups > 0 ? Math.floor(maxBackups) : 3,
     requireChecksum: elements.requireChecksum.checked,
     autoOpenZeroTrust: elements.autoOpenZeroTrust.checked,
-    autoStartTunnel: elements.autoStartTunnel.checked
+    autoStartTunnel: elements.autoStartTunnel.checked,
+    autoCheckAppUpdate: elements.autoCheckAppUpdate.checked
   };
 }
 
@@ -131,6 +137,11 @@ function setTunnelStatus(text, status) {
 function setCloudflaredStatus(text, status) {
   elements.cloudflaredStatus.textContent = text;
   elements.cloudflaredStatus.dataset.status = status;
+}
+
+function setUpdateStatus(text, status) {
+  elements.updateStatus.textContent = text;
+  elements.updateStatus.dataset.status = status;
 }
 
 function setRunningState(isRunning) {
@@ -366,6 +377,7 @@ async function init() {
   const config = await window.api.loadConfig();
   applyConfig(config);
   setTunnelStatus('Tunnel: idle', 'idle');
+  setUpdateStatus('update: idle', 'idle');
   renderConnections([]);
 
   const defaultLogFile = await window.api.getDefaultLogFile();
@@ -422,6 +434,75 @@ window.api.onStatus((status) => {
 window.api.onInstallLog((message) => {
   if (message) {
     elements.installStatus.textContent = `Install status: ${message}`;
+  }
+});
+
+window.api.onAppUpdate((payload) => {
+  const phase = payload && payload.phase ? String(payload.phase) : '';
+  const version = payload && payload.version ? String(payload.version) : '';
+  if (!phase) return;
+
+  if (phase === 'checking') {
+    setUpdateStatus('update: checking', 'info');
+    if (payload.manual) {
+      appendLog('Checking app updates...\n');
+    }
+    return;
+  }
+
+  if (phase === 'no-update') {
+    setUpdateStatus(`update: latest v${version || '--'}`, 'info');
+    if (payload.manual) {
+      appendLog(`App update: already latest (v${version || '--'}).\n`);
+    }
+    return;
+  }
+
+  if (phase === 'available') {
+    setUpdateStatus(`update: v${version || '?'} available`, 'info');
+    if (!payload.deferred) {
+      appendLog(`App update available: v${version || '?'}.\n`);
+    }
+    return;
+  }
+
+  if (phase === 'downloading') {
+    const progress = Number(payload.progress);
+    if (Number.isFinite(progress)) {
+      setUpdateStatus(`update: downloading ${progress}%`, 'info');
+      if (progress !== lastUpdateProgress && (progress % 10 === 0 || progress === 100)) {
+        lastUpdateProgress = progress;
+        appendLog(`App update downloading: ${progress}%\n`);
+      }
+    } else {
+      setUpdateStatus('update: downloading', 'info');
+    }
+    return;
+  }
+
+  if (phase === 'downloaded') {
+    lastUpdateProgress = -1;
+    setUpdateStatus(`update: v${version || '?'} downloaded`, 'running');
+    appendLog(`App update downloaded: ${payload.filePath || ''}\n`);
+    return;
+  }
+
+  if (phase === 'installing') {
+    setUpdateStatus(`update: installing v${version || '?'}`, 'info');
+    appendLog('Launching installer package...\n');
+    return;
+  }
+
+  if (phase === 'skipped') {
+    setUpdateStatus(`update: skipped v${version || '?'}`, 'idle');
+    appendLog(`Skipped app update version: v${version || '?'}\n`);
+    return;
+  }
+
+  if (phase === 'error') {
+    lastUpdateProgress = -1;
+    setUpdateStatus('update: error', 'error');
+    appendLog(`App update error: ${payload.error || 'unknown error'}\n`);
   }
 });
 
@@ -606,6 +687,13 @@ elements.openLogDirBtn.addEventListener('click', async () => {
 
 elements.openConfigBtn.addEventListener('click', async () => {
   await window.api.openConfigDir();
+});
+
+elements.checkUpdateBtn.addEventListener('click', async () => {
+  const result = await window.api.checkAppUpdate({ manual: true, ignoreSkipped: true });
+  if (!result || result.ok !== true) {
+    appendLog(`App update check failed: ${result && result.error ? result.error : 'unknown error'}\n`);
+  }
 });
 
 elements.importConfigBtn.addEventListener('click', async () => {

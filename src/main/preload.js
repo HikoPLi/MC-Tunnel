@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('api', {
   loadConfig: () => ipcRenderer.invoke('config:load'),
   saveConfig: (partial) => ipcRenderer.invoke('config:save', partial),
   getAppVersion: () => ipcRenderer.invoke('app:version'),
+  checkAppUpdate: (options) => ipcRenderer.invoke('app-update:check', options),
   exportConfig: () => ipcRenderer.invoke('config:export'),
   importConfig: () => ipcRenderer.invoke('config:import'),
   checkCloudflared: (cloudflaredPath) => ipcRenderer.invoke('cloudflared:check', cloudflaredPath),
@@ -25,5 +26,6 @@ contextBridge.exposeInMainWorld('api', {
   onStatus: (callback) => ipcRenderer.on('tunnel:status', (_event, status) => callback(status)),
   onConnections: (callback) => ipcRenderer.on('tunnel:connections', (_event, connections) => callback(connections)),
   onInstallLog: (callback) => ipcRenderer.on('cloudflared:install-log', (_event, message) => callback(message)),
-  onAuthUrl: (callback) => ipcRenderer.on('tunnel:auth-url', (_event, payload) => callback(payload))
+  onAuthUrl: (callback) => ipcRenderer.on('tunnel:auth-url', (_event, payload) => callback(payload)),
+  onAppUpdate: (callback) => ipcRenderer.on('app:update', (_event, payload) => callback(payload))
 });

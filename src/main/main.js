@@ -4,6 +4,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 
 const { loadConfig, saveConfig, getDefaultLogFile } = require('./config');
 const { probeCloudflared, installCloudflared } = require('./cloudflared');
+const { checkForAppUpdate, downloadUpdateAsset, normalizeVersion } = require('./appupdate');
 const { validateConfig, parseLocalBind, formatLocalBind } = require('./validation');
 const { checkPort, pickFreePort } = require('./portcheck');
 const {
@@ -19,6 +20,15 @@ const { findPortOwners, killPortOwners } = require('./portowner');
 
 let mainWindow = null;
 let runtimeTunnelSettings = null;
+let updateScheduler = null;
+let updateStartupTimer = null;
+let updateCheckPending = false;
+let updateDownloadPending = false;
+let lastPromptedUpdateVersion = '';
+
+const UPDATE_SOURCE_OWNER = 'HikoPLi';
+const UPDATE_SOURCE_REPO = 'MC-Tunnel';
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 function getManagedCloudflaredDir() {
   return path.join(app.getPath('userData'), 'bin');
@@ -49,6 +59,246 @@ function sendInstallLog(message) {
 function sendAuthUrl(payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('tunnel:auth-url', payload);
+  }
+}
+
+function sendAppUpdate(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('app:update', payload);
+  }
+}
+
+function getUpdateDownloadDir() {
+  return path.join(app.getPath('userData'), 'updates');
+}
+
+function formatPublishedAt(value) {
+  if (!value) return 'unknown';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'unknown';
+  return parsed.toISOString().slice(0, 10);
+}
+
+function buildUpdateDetail(info) {
+  const lines = [
+    `Current version: v${info.currentVersion}`,
+    `Latest version : v${info.latestVersion}`,
+    `Package        : ${info.asset.name}`,
+    `Published      : ${formatPublishedAt(info.publishedAt)}`
+  ];
+  if (info.releaseUrl) {
+    lines.push(`Release page   : ${info.releaseUrl}`);
+  }
+  if (info.releaseNotes) {
+    lines.push('', info.releaseNotes);
+  }
+  return lines.join('\n');
+}
+
+async function installDownloadedUpdate(filePath, latestVersion) {
+  const openError = await shell.openPath(filePath);
+  if (openError) {
+    sendAppUpdate({ phase: 'error', version: latestVersion, error: openError });
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await dialog.showMessageBox(mainWindow, {
+        type: 'error',
+        title: 'Install failed',
+        message: 'Failed to open the downloaded installer package.',
+        detail: openError
+      });
+    }
+    return { ok: false, error: openError };
+  }
+
+  sendAppUpdate({ phase: 'installing', version: latestVersion, filePath });
+
+  if (process.platform === 'win32') {
+    setTimeout(() => app.quit(), 1200);
+  } else if (mainWindow && !mainWindow.isDestroyed()) {
+    const message = process.platform === 'darwin'
+      ? 'Installer opened. Complete installation, then relaunch the app.'
+      : 'Package opened. Complete installation with your system installer.';
+    await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Installer opened',
+      message
+    });
+  }
+
+  return { ok: true, action: 'install-opened', filePath };
+}
+
+async function downloadAndInstallUpdate(info) {
+  if (updateDownloadPending) {
+    return { ok: false, error: 'Update download is already running' };
+  }
+
+  updateDownloadPending = true;
+  sendAppUpdate({ phase: 'downloading', version: info.latestVersion, progress: 0, asset: info.asset.name });
+
+  let lastPercent = -1;
+  const downloadResult = await downloadUpdateAsset(info.asset, getUpdateDownloadDir(), (progress) => {
+    if (!progress) return;
+    if (!Number.isFinite(progress.percent)) return;
+    const percent = Math.max(0, Math.min(100, progress.percent));
+    if (percent === lastPercent || (percent % 5 !== 0 && percent !== 100)) return;
+    lastPercent = percent;
+    sendAppUpdate({ phase: 'downloading', version: info.latestVersion, progress: percent, asset: info.asset.name });
+  });
+
+  updateDownloadPending = false;
+
+  if (!downloadResult.ok) {
+    sendAppUpdate({ phase: 'error', version: info.latestVersion, error: downloadResult.error || 'Update download failed' });
+    return downloadResult;
+  }
+
+  sendAppUpdate({
+    phase: 'downloaded',
+    version: info.latestVersion,
+    filePath: downloadResult.path,
+    asset: info.asset.name
+  });
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { ok: true, action: 'downloaded', filePath: downloadResult.path };
+  }
+
+  const installPrompt = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    title: 'Update downloaded',
+    message: `Version v${info.latestVersion} has been downloaded.`,
+    detail: `File: ${downloadResult.path}`,
+    buttons: ['Install now', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true
+  });
+
+  if (installPrompt.response !== 0) {
+    return { ok: true, action: 'downloaded-later', filePath: downloadResult.path };
+  }
+
+  return installDownloadedUpdate(downloadResult.path, info.latestVersion);
+}
+
+function stopAppUpdateScheduler() {
+  if (updateStartupTimer) {
+    clearTimeout(updateStartupTimer);
+    updateStartupTimer = null;
+  }
+  if (updateScheduler) {
+    clearInterval(updateScheduler);
+    updateScheduler = null;
+  }
+}
+
+function startAppUpdateScheduler(config) {
+  stopAppUpdateScheduler();
+  const settings = config && config.settings ? config.settings : {};
+  if (!settings.autoCheckAppUpdate) return;
+
+  updateStartupTimer = setTimeout(() => {
+    runAppUpdateCheck({ manual: false, ignoreSkipped: false }).catch(() => {});
+  }, 12000);
+
+  updateScheduler = setInterval(() => {
+    runAppUpdateCheck({ manual: false, ignoreSkipped: false }).catch(() => {});
+  }, UPDATE_CHECK_INTERVAL_MS);
+}
+
+async function runAppUpdateCheck(options = {}) {
+  const manual = Boolean(options.manual);
+  const ignoreSkipped = Boolean(options.ignoreSkipped);
+  if (updateCheckPending) {
+    if (manual) {
+      return { ok: false, error: 'Update check is already running' };
+    }
+    return { ok: true, skipped: true };
+  }
+
+  updateCheckPending = true;
+  sendAppUpdate({ phase: 'checking', manual });
+
+  try {
+    const currentConfig = loadConfig();
+    const skippedVersion = normalizeVersion(currentConfig.skippedAppVersion || '');
+    const checkResult = await checkForAppUpdate({
+      owner: UPDATE_SOURCE_OWNER,
+      repo: UPDATE_SOURCE_REPO,
+      currentVersion: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch
+    });
+
+    if (!checkResult.ok) {
+      sendAppUpdate({ phase: 'error', manual, error: checkResult.error || 'Update check failed' });
+      if (manual && mainWindow && !mainWindow.isDestroyed()) {
+        await dialog.showMessageBox(mainWindow, {
+          type: 'error',
+          title: 'Update check failed',
+          message: checkResult.error || 'Update check failed'
+        });
+      }
+      return checkResult;
+    }
+
+    if (!checkResult.updateAvailable) {
+      lastPromptedUpdateVersion = '';
+      sendAppUpdate({ phase: 'no-update', manual, version: checkResult.currentVersion });
+      if (manual && mainWindow && !mainWindow.isDestroyed()) {
+        await dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          title: 'No updates found',
+          message: `You are already on the latest version (v${checkResult.currentVersion}).`
+        });
+      }
+      return checkResult;
+    }
+
+    if (!manual && !ignoreSkipped && skippedVersion && skippedVersion === checkResult.latestVersion) {
+      sendAppUpdate({ phase: 'skipped', version: skippedVersion });
+      return { ok: true, updateAvailable: false, skipped: true, latestVersion: skippedVersion };
+    }
+
+    if (!manual && lastPromptedUpdateVersion === checkResult.latestVersion) {
+      sendAppUpdate({ phase: 'available', version: checkResult.latestVersion, deferred: true });
+      return { ok: true, updateAvailable: true, action: 'deferred', latestVersion: checkResult.latestVersion };
+    }
+
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { ok: true, updateAvailable: true, action: 'pending-no-window', latestVersion: checkResult.latestVersion };
+    }
+
+    sendAppUpdate({ phase: 'available', version: checkResult.latestVersion, asset: checkResult.asset.name });
+
+    lastPromptedUpdateVersion = checkResult.latestVersion;
+    const prompt = await dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      title: 'Update available',
+      message: `A new version is available: v${checkResult.latestVersion}`,
+      detail: buildUpdateDetail(checkResult),
+      buttons: ['Download and install', 'Skip this version', 'Later'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true
+    });
+
+    if (prompt.response === 1) {
+      saveConfig({ skippedAppVersion: checkResult.latestVersion });
+      sendAppUpdate({ phase: 'skipped', version: checkResult.latestVersion });
+      return { ok: true, updateAvailable: true, action: 'skip', latestVersion: checkResult.latestVersion };
+    }
+
+    if (prompt.response === 2) {
+      sendAppUpdate({ phase: 'available', version: checkResult.latestVersion, deferred: true });
+      return { ok: true, updateAvailable: true, action: 'later', latestVersion: checkResult.latestVersion };
+    }
+
+    saveConfig({ skippedAppVersion: '' });
+    return downloadAndInstallUpdate(checkResult);
+  } finally {
+    updateCheckPending = false;
   }
 }
 
@@ -328,6 +578,7 @@ async function tryAutoStart() {
 
 app.whenReady().then(async () => {
   createWindow();
+  startAppUpdateScheduler(loadConfig());
   await tryAutoStart();
 
   app.on('activate', () => {
@@ -344,6 +595,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  stopAppUpdateScheduler();
   if (isRunning()) {
     stopTunnel();
   }
@@ -351,9 +603,21 @@ app.on('before-quit', () => {
 
 ipcMain.handle('config:load', () => loadConfig());
 
-ipcMain.handle('config:save', (_event, partial) => saveConfig(partial));
+ipcMain.handle('config:save', (_event, partial) => {
+  const saved = saveConfig(partial);
+  if (app.isReady()) {
+    startAppUpdateScheduler(saved);
+  }
+  return saved;
+});
 
 ipcMain.handle('app:version', () => app.getVersion());
+
+ipcMain.handle('app-update:check', async (_event, options) => {
+  const manual = !options || options.manual !== false;
+  const ignoreSkipped = !options || options.ignoreSkipped !== false;
+  return runAppUpdateCheck({ manual, ignoreSkipped });
+});
 
 ipcMain.handle('cloudflared:check', async (_event, cloudflaredPath) => {
   return probeResolvedCloudflared(cloudflaredPath);
@@ -559,6 +823,9 @@ ipcMain.handle('config:import', async () => {
     const raw = fs.readFileSync(filePath, 'utf8');
     const parsed = JSON.parse(raw);
     const saved = saveConfig(parsed);
+    if (app.isReady()) {
+      startAppUpdateScheduler(saved);
+    }
     return { ok: true, config: saved };
   } catch (err) {
     return { ok: false, error: err.message || 'Import failed' };

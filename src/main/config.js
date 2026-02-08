@@ -10,7 +10,8 @@ const DEFAULT_SETTINGS = {
   requireChecksum: true,
   autoStartTunnel: false,
   autoOpenZeroTrust: true,
-  allowPortKill: false
+  allowPortKill: false,
+  autoCheckAppUpdate: false
 };
 
 function ensureDir(dirPath) {
@@ -81,6 +82,7 @@ function sanitizeProfiles(list) {
 function normalizeConfig(raw) {
   const settings = { ...DEFAULT_SETTINGS, ...(raw.settings || {}) };
   const savedLinks = sanitizeSavedLinks(raw.savedLinks || raw.links || []);
+  const skippedAppVersion = String(raw.skippedAppVersion || '').trim();
   let profiles = sanitizeProfiles(raw.profiles || []);
 
   if (profiles.length === 0) {
@@ -107,7 +109,8 @@ function normalizeConfig(raw) {
     savedLinks,
     profiles,
     activeProfileId: activeExists ? activeProfileId : '',
-    settings
+    settings,
+    skippedAppVersion
   };
 }
 

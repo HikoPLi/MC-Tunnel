@@ -20,6 +20,7 @@
         <div class="status-stack">
           <span id="tunnelStatus" class="badge" data-status="idle">Tunnel: idle</span>
           <span id="cloudflaredStatus" class="badge" data-status="unknown">cloudflared: unknown</span>
+          <span id="updateStatus" class="badge" data-status="unknown">update: idle</span>
           <span id="appVersion" class="badge" data-status="info">app: --</span>
         </div>
       </header>
@@ -140,6 +141,10 @@
             <input id="autoStartTunnel" type="checkbox" />
             <span>Auto-start tunnel on app launch (requires active profile)</span>
           </label>
+          <label class="check">
+            <input id="autoCheckAppUpdate" type="checkbox" />
+            <span>Check app updates in background</span>
+          </label>
           <div class="actions">
             <button id="saveSettings" class="ghost">Save settings</button>
           </div>
@@ -154,6 +159,7 @@
           <button id="openLogBtn" class="ghost">Open log</button>
           <button id="openLogDirBtn" class="ghost">Open log folder</button>
           <button id="openConfigBtn" class="ghost">Open config folder</button>
+          <button id="checkUpdateBtn" class="ghost">Check update</button>
           <button id="importConfigBtn" class="ghost">Import config</button>
           <button id="exportConfigBtn" class="ghost">Export config</button>
         </div>
