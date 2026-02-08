@@ -39,6 +39,8 @@ const elements = {
   tunnelStatus: document.getElementById('tunnelStatus'),
   cloudflaredStatus: document.getElementById('cloudflaredStatus'),
   appVersion: document.getElementById('appVersion'),
+  connectionSummary: document.getElementById('connectionSummary'),
+  connectionList: document.getElementById('connectionList'),
   zeroTrustNotice: document.getElementById('zeroTrustNotice'),
   zeroTrustUrl: document.getElementById('zeroTrustUrl'),
   zeroTrustHint: document.getElementById('zeroTrustHint'),
@@ -51,6 +53,22 @@ let savedLinks = [];
 let profiles = [];
 let activeProfileId = '';
 let zeroTrustUrl = '';
+let runtimeConnections = [];
+let startTunnelPending = false;
+
+function splitListInput(input) {
+  return String(input || '')
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function summarizeListInput(input, emptyLabel) {
+  const items = splitListInput(input);
+  if (items.length === 0) return emptyLabel || '';
+  if (items.length === 1) return items[0];
+  return `${items[0]} (+${items.length - 1})`;
+}
 
 function generateId() {
   if (window.crypto && typeof window.crypto.randomUUID === 'function') {
@@ -116,8 +134,100 @@ function setCloudflaredStatus(text, status) {
 }
 
 function setRunningState(isRunning) {
-  elements.startBtn.disabled = isRunning;
+  elements.startBtn.disabled = false;
   elements.stopBtn.disabled = !isRunning;
+}
+
+function sanitizeConnections(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((item) => item && item.id)
+    .map((item) => ({
+      id: String(item.id),
+      hostname: String(item.hostname || '').trim(),
+      localBind: String(item.localBind || '').trim(),
+      autoAssigned: Boolean(item.autoAssigned),
+      running: Boolean(item.running),
+      pid: Number.isInteger(item.pid) ? item.pid : null,
+      lastError: String(item.lastError || '').trim()
+    }));
+}
+
+function connectionStatus(connection) {
+  if (connection.running) return { text: 'running', badge: 'running' };
+  if (connection.lastError) return { text: 'error', badge: 'error' };
+  return { text: 'stopped', badge: 'idle' };
+}
+
+function renderConnections(list) {
+  runtimeConnections = sanitizeConnections(list);
+  elements.connectionList.innerHTML = '';
+
+  const runningCount = runtimeConnections.filter((item) => item.running).length;
+  if (runtimeConnections.length === 0) {
+    elements.connectionSummary.textContent = 'No configured connections';
+    const empty = document.createElement('div');
+    empty.className = 'connection-empty';
+    empty.textContent = 'Start tunnel to generate connection list.';
+    elements.connectionList.appendChild(empty);
+    setRunningState(false);
+    return;
+  }
+
+  elements.connectionSummary.textContent = `${runningCount}/${runtimeConnections.length} running`;
+  setRunningState(runningCount > 0);
+
+  runtimeConnections.forEach((connection) => {
+    const row = document.createElement('div');
+    row.className = 'connection-row';
+
+    const main = document.createElement('div');
+    main.className = 'connection-main';
+
+    const title = document.createElement('div');
+    title.className = 'connection-title';
+    title.textContent = `${connection.hostname} -> ${connection.localBind}`;
+    main.appendChild(title);
+
+    const sub = document.createElement('div');
+    sub.className = 'connection-sub';
+    const suffix = connection.autoAssigned ? 'auto-assigned' : 'custom bind';
+    const errorSuffix = connection.lastError ? ` | ${connection.lastError}` : '';
+    sub.textContent = `${suffix}${errorSuffix}`;
+    main.appendChild(sub);
+
+    const controls = document.createElement('div');
+    controls.className = 'connection-controls';
+
+    const status = connectionStatus(connection);
+    const statusBadge = document.createElement('span');
+    statusBadge.className = 'badge';
+    statusBadge.dataset.status = status.badge;
+    statusBadge.textContent = connection.running && connection.pid
+      ? `${status.text} #${connection.pid}`
+      : status.text;
+    controls.appendChild(statusBadge);
+
+    const startBtn = document.createElement('button');
+    startBtn.className = 'ghost';
+    startBtn.dataset.action = 'start';
+    startBtn.dataset.id = connection.id;
+    startBtn.textContent = 'Start';
+    startBtn.disabled = connection.running;
+    controls.appendChild(startBtn);
+
+    const stopBtn = document.createElement('button');
+    stopBtn.className = 'ghost';
+    stopBtn.dataset.action = 'stop';
+    stopBtn.dataset.id = connection.id;
+    stopBtn.textContent = 'Stop';
+    stopBtn.disabled = !connection.running;
+    controls.appendChild(stopBtn);
+
+    row.appendChild(main);
+    row.appendChild(controls);
+    elements.connectionList.appendChild(row);
+  });
 }
 
 function appendLog(line) {
@@ -153,7 +263,7 @@ function sanitizeSavedLinks(list) {
     if (!item) return;
     const hostname = String(item.hostname || '').trim();
     const localBind = String(item.localBind || '').trim();
-    if (!hostname || !localBind) return;
+    if (!hostname) return;
     const key = `${hostname}|${localBind}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -182,7 +292,9 @@ function renderSavedLinks(list) {
   savedLinks.forEach((link, index) => {
     const opt = document.createElement('option');
     opt.value = String(index);
-    opt.textContent = `${link.hostname} -> ${link.localBind}`;
+    const hostnameLabel = summarizeListInput(link.hostname, 'invalid hostname');
+    const bindLabel = summarizeListInput(link.localBind, 'auto');
+    opt.textContent = `${hostnameLabel} -> ${bindLabel}`;
     elements.savedLinks.appendChild(opt);
   });
 }
@@ -254,7 +366,7 @@ async function init() {
   const config = await window.api.loadConfig();
   applyConfig(config);
   setTunnelStatus('Tunnel: idle', 'idle');
-  setRunningState(false);
+  renderConnections([]);
 
   const defaultLogFile = await window.api.getDefaultLogFile();
   if (!elements.logFile.value.trim() && defaultLogFile) {
@@ -272,19 +384,32 @@ async function init() {
   const cloudflared = await window.api.checkCloudflared(elements.cloudflaredPath.value.trim());
   if (cloudflared.ok) {
     setCloudflaredStatus('cloudflared: ready', 'running');
+    if (!elements.cloudflaredPath.value.trim() && cloudflared.path) {
+      elements.cloudflaredPath.value = cloudflared.path;
+    }
   } else {
     setCloudflaredStatus('cloudflared: missing', 'error');
   }
+
+  const connections = await window.api.listConnections();
+  renderConnections(connections);
 }
 
 window.api.onLog((line) => appendLog(line));
+window.api.onConnections((connections) => {
+  renderConnections(connections);
+});
 window.api.onStatus((status) => {
   if (status.running) {
     setTunnelStatus('Tunnel: running', 'running');
-    setRunningState(true);
+    if (!runtimeConnections.some((item) => item.running)) {
+      setRunningState(true);
+    }
   } else {
     setTunnelStatus('Tunnel: stopped', status.error ? 'error' : 'idle');
-    setRunningState(false);
+    if (!runtimeConnections.some((item) => item.running)) {
+      setRunningState(false);
+    }
     setZeroTrustNotice('');
     if (status.error) {
       appendLog(`Status error: ${status.error}\n`);
@@ -308,20 +433,48 @@ window.api.onAuthUrl((payload) => {
 });
 
 elements.startBtn.addEventListener('click', async () => {
+  if (startTunnelPending) return;
+  startTunnelPending = true;
+  elements.startBtn.disabled = true;
   setZeroTrustNotice('');
   const config = collectConfig();
-  if (!config.hostname || !config.localBind || !config.logLevel || !config.logFile) {
-    appendLog('Start failed: hostname, local bind, log level, and log file are required.\n');
-    setTunnelStatus('Tunnel: error', 'error');
-    return;
-  }
-  const result = await window.api.startTunnel(config);
-  if (!result.ok) {
-    appendLog(`Start failed: ${result.error || 'unknown error'}\n`);
-    if (result.details) {
-      appendLog(`${result.details}\n`);
+  try {
+    if (!config.hostname || !config.logLevel || !config.logFile) {
+      appendLog('Start failed: hostname, log level, and log file are required.\n');
+      setTunnelStatus('Tunnel: error', 'error');
+      return;
     }
-    setTunnelStatus('Tunnel: error', 'error');
+    const result = await window.api.startTunnel(config);
+    if (result.ok) {
+      if (Array.isArray(result.connections)) {
+        renderConnections(result.connections);
+      }
+      const startedCount = Array.isArray(result.pids) ? result.pids.length : 0;
+      if (Array.isArray(result.targets) && result.targets.length > 0) {
+        if (startedCount > 0) {
+          appendLog(`Started ${startedCount} new connection(s). Total configured: ${result.targets.length}.\n`);
+        } else {
+          appendLog(`No new connections started. Total configured: ${result.targets.length}.\n`);
+        }
+        result.targets.forEach((target) => {
+          const suffix = target.autoAssigned ? ' (auto)' : '';
+          appendLog(`Connection: ${target.hostname} -> ${target.localBind}${suffix}\n`);
+        });
+      } else {
+        appendLog('Tunnel started.\n');
+      }
+      return;
+    }
+    if (!result.ok) {
+      appendLog(`Start failed: ${result.error || 'unknown error'}\n`);
+      if (result.details) {
+        appendLog(`${result.details}\n`);
+      }
+      setTunnelStatus('Tunnel: error', 'error');
+    }
+  } finally {
+    startTunnelPending = false;
+    elements.startBtn.disabled = false;
   }
 });
 
@@ -333,17 +486,60 @@ elements.stopBtn.addEventListener('click', async () => {
   }
 });
 
-elements.testPortBtn.addEventListener('click', async () => {
-  const localBind = elements.localBind.value.trim();
-  if (!localBind) {
-    appendLog('Port check failed: local bind is required.\n');
+elements.connectionList.addEventListener('click', async (event) => {
+  const button = event.target.closest('button[data-action][data-id]');
+  if (!button) return;
+
+  const action = button.dataset.action;
+  const connectionId = button.dataset.id;
+  if (!action || !connectionId) return;
+
+  button.disabled = true;
+  if (action === 'start') {
+    const result = await window.api.startConnection(connectionId);
+    if (!result.ok) {
+      appendLog(`Start connection failed: ${result.error || 'unknown error'}\n`);
+      if (result.details) {
+        appendLog(`${result.details}\n`);
+      }
+    } else {
+      appendLog('Connection started.\n');
+      if (Array.isArray(result.connections)) {
+        renderConnections(result.connections);
+      }
+    }
     return;
   }
-  const result = await window.api.checkPort(localBind);
-  if (result.ok) {
-    appendLog('Port check: available.\n');
-  } else {
-    appendLog(`Port check failed: ${result.error || 'unknown error'}\n`);
+
+  if (action === 'stop') {
+    const result = await window.api.stopConnection(connectionId);
+    if (!result.ok) {
+      appendLog(`Stop connection failed: ${result.error || 'unknown error'}\n`);
+    } else {
+      appendLog('Connection stopping...\n');
+      if (Array.isArray(result.connections)) {
+        renderConnections(result.connections);
+      }
+    }
+  }
+});
+
+elements.testPortBtn.addEventListener('click', async () => {
+  const localBinds = splitListInput(elements.localBind.value);
+  if (localBinds.length === 0) {
+    appendLog('Port check skipped: no custom local bind; start will auto-assign available bind(s).\n');
+    return;
+  }
+
+  for (let index = 0; index < localBinds.length; index += 1) {
+    const localBind = localBinds[index];
+    const result = await window.api.checkPort(localBind);
+    const prefix = localBinds.length > 1 ? `Port check [${index + 1}/${localBinds.length}]` : 'Port check';
+    if (result.ok) {
+      appendLog(`${prefix}: ${localBind} is available.\n`);
+    } else {
+      appendLog(`${prefix} failed: ${localBind} -> ${result.error || 'unknown error'}\n`);
+    }
   }
 });
 
@@ -351,6 +547,9 @@ elements.checkCloudflared.addEventListener('click', async () => {
   const result = await window.api.checkCloudflared(elements.cloudflaredPath.value.trim());
   if (result.ok) {
     setCloudflaredStatus('cloudflared: ready', 'running');
+    if (!elements.cloudflaredPath.value.trim() && result.path) {
+      elements.cloudflaredPath.value = result.path;
+    }
     appendLog(`cloudflared found: ${result.version || ''}\n`);
   } else {
     setCloudflaredStatus('cloudflared: missing', 'error');
@@ -444,8 +643,8 @@ elements.openZeroTrust.addEventListener('click', async () => {
 elements.saveLink.addEventListener('click', async () => {
   const hostname = elements.hostname.value.trim();
   const localBind = elements.localBind.value.trim();
-  if (!hostname || !localBind) {
-    appendLog('Save link failed: hostname and local bind are required.\n');
+  if (!hostname) {
+    appendLog('Save link failed: hostname is required.\n');
     return;
   }
   const next = sanitizeSavedLinks([...savedLinks, { hostname, localBind }]);
@@ -494,8 +693,8 @@ elements.saveProfile.addEventListener('click', async () => {
     appendLog('Save profile failed: profile name is required.\n');
     return;
   }
-  if (!config.hostname || !config.localBind || !config.logLevel || !config.logFile) {
-    appendLog('Save profile failed: hostname, local bind, log level, and log file are required.\n');
+  if (!config.hostname || !config.logLevel || !config.logFile) {
+    appendLog('Save profile failed: hostname, log level, and log file are required.\n');
     return;
   }
 

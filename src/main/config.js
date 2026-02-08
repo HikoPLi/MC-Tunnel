@@ -41,7 +41,7 @@ function sanitizeSavedLinks(list) {
     if (!item) return;
     const hostname = String(item.hostname || '').trim();
     const localBind = String(item.localBind || '').trim();
-    if (!hostname || !localBind) return;
+    if (!hostname) return;
     const key = `${hostname}|${localBind}`;
     if (seen.has(key)) return;
     seen.add(key);

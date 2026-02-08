@@ -28,12 +28,12 @@
         <div class="panel">
           <h2>Connection</h2>
           <label>
-            Hostname
-            <input id="hostname" type="text" placeholder="enter hostname" />
+            Hostname(s)
+            <input id="hostname" type="text" placeholder="example: mc-a.example.com, mc-b.example.com" />
           </label>
           <label>
-            Local bind
-            <input id="localBind" type="text" placeholder="enter local bind" />
+            Local bind(s) (optional)
+            <input id="localBind" type="text" placeholder="example: 127.0.0.1:25566, 127.0.0.1:25567" />
           </label>
           <label>
             Log level
@@ -65,7 +65,7 @@
             <button id="loadLink" class="ghost">Load selected</button>
             <button id="deleteLink" class="ghost">Delete selected</button>
           </div>
-          <div class="note">Minecraft should connect to the address and port you set in Local bind on this machine.</div>
+          <div class="note">Separate multiple entries with commas. If local bind is empty, available bind(s) will be auto-assigned.</div>
         </div>
 
         <div class="panel">
@@ -103,7 +103,7 @@
             <button id="loadProfile" class="ghost">Load selected</button>
             <button id="deleteProfile" class="ghost">Delete selected</button>
           </div>
-          <div class="note">Profiles store hostname, local bind, log settings, and cloudflared path.</div>
+          <div class="note">Profiles store hostname(s), optional local bind(s), log settings, and cloudflared path.</div>
         </div>
 
         <div class="panel">
@@ -157,6 +157,14 @@
           <button id="importConfigBtn" class="ghost">Import config</button>
           <button id="exportConfigBtn" class="ghost">Export config</button>
         </div>
+      </section>
+
+      <section class="panel">
+        <div class="log-header">
+          <h2>Tunnel Connections</h2>
+          <div id="connectionSummary" class="note-inline">No active connections</div>
+        </div>
+        <div id="connectionList" class="connection-list"></div>
       </section>
 
       <section class="panel log-panel">

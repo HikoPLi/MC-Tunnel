@@ -1,5 +1,12 @@
 const VALID_LOG_LEVELS = new Set(['auto', 'debug', 'info', 'warn', 'error']);
 
+function splitListInput(input) {
+  return String(input || '')
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function parseLocalBind(localBind) {
   const input = String(localBind || '').trim();
   if (!input) {
@@ -44,24 +51,80 @@ function parseLocalBind(localBind) {
   return { ok: true, host, port };
 }
 
+function parseHostnames(hostnameInput) {
+  const hostnames = splitListInput(hostnameInput);
+  if (hostnames.length === 0) {
+    return { ok: false, error: 'Hostname is required' };
+  }
+
+  const seen = new Set();
+  for (const hostname of hostnames) {
+    if (/\s/.test(hostname)) {
+      return { ok: false, error: `Hostname "${hostname}" contains invalid whitespace` };
+    }
+    if (hostname.startsWith('http://') || hostname.startsWith('https://')) {
+      return { ok: false, error: `Hostname "${hostname}" must not include a URL scheme` };
+    }
+    if (seen.has(hostname)) {
+      return { ok: false, error: `Hostname "${hostname}" is duplicated` };
+    }
+    seen.add(hostname);
+  }
+
+  return { ok: true, hostnames };
+}
+
+function parseLocalBindList(localBindInput) {
+  const items = splitListInput(localBindInput);
+  if (items.length === 0) {
+    return { ok: true, binds: [] };
+  }
+
+  const binds = [];
+  const seen = new Set();
+  for (let i = 0; i < items.length; i += 1) {
+    const parsed = parseLocalBind(items[i]);
+    if (!parsed.ok) {
+      return { ok: false, error: `Local bind #${i + 1}: ${parsed.error}` };
+    }
+    const key = `${parsed.host}|${parsed.port}`;
+    if (seen.has(key)) {
+      return { ok: false, error: `Local bind "${items[i]}" is duplicated` };
+    }
+    seen.add(key);
+    binds.push(parsed);
+  }
+
+  return { ok: true, binds };
+}
+
+function formatLocalBind(bind) {
+  const host = String(bind && bind.host ? bind.host : '').trim();
+  const port = Number(bind && bind.port);
+  if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) {
+    return '';
+  }
+  if (host.includes(':') && !host.startsWith('[') && !host.endsWith(']')) {
+    return `[${host}]:${port}`;
+  }
+  return `${host}:${port}`;
+}
+
 function validateConfig(config) {
-  const hostname = String(config.hostname || '').trim();
+  const hostnameResult = parseHostnames(config.hostname);
   const logLevel = String(config.logLevel || '').trim();
   const logFile = String(config.logFile || '').trim();
 
-  if (!hostname) {
-    return { ok: false, error: 'Hostname is required' };
-  }
-  if (/\s/.test(hostname)) {
-    return { ok: false, error: 'Hostname contains invalid whitespace' };
-  }
-  if (hostname.startsWith('http://') || hostname.startsWith('https://')) {
-    return { ok: false, error: 'Hostname must not include a URL scheme' };
+  if (!hostnameResult.ok) {
+    return hostnameResult;
   }
 
-  const bind = parseLocalBind(config.localBind);
-  if (!bind.ok) {
-    return bind;
+  const bindResult = parseLocalBindList(config.localBind);
+  if (!bindResult.ok) {
+    return bindResult;
+  }
+  if (bindResult.binds.length > hostnameResult.hostnames.length) {
+    return { ok: false, error: 'Local bind count must not exceed hostname count' };
   }
 
   if (!logLevel || !VALID_LOG_LEVELS.has(logLevel)) {
@@ -72,10 +135,17 @@ function validateConfig(config) {
     return { ok: false, error: 'Log file is required' };
   }
 
-  return { ok: true, bind };
+  return {
+    ok: true,
+    hostnames: hostnameResult.hostnames,
+    binds: bindResult.binds
+  };
 }
 
 module.exports = {
+  parseHostnames,
+  parseLocalBindList,
   parseLocalBind,
+  formatLocalBind,
   validateConfig
 };

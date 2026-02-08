@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld('api', {
   installCloudflared: (options) => ipcRenderer.invoke('cloudflared:install', options),
   startTunnel: (config) => ipcRenderer.invoke('tunnel:start', config),
   stopTunnel: () => ipcRenderer.invoke('tunnel:stop'),
+  listConnections: () => ipcRenderer.invoke('tunnel:connections'),
+  startConnection: (connectionId) => ipcRenderer.invoke('tunnel:start-connection', connectionId),
+  stopConnection: (connectionId) => ipcRenderer.invoke('tunnel:stop-connection', connectionId),
   checkPort: (localBind) => ipcRenderer.invoke('port:check', localBind),
   pickCloudflaredPath: () => ipcRenderer.invoke('dialog:pick-cloudflared'),
   pickLogFile: (suggestedPath) => ipcRenderer.invoke('dialog:pick-logfile', suggestedPath),
@@ -20,6 +23,7 @@ contextBridge.exposeInMainWorld('api', {
   openExternal: (url) => ipcRenderer.invoke('external:open', url),
   onLog: (callback) => ipcRenderer.on('tunnel:log', (_event, line) => callback(line)),
   onStatus: (callback) => ipcRenderer.on('tunnel:status', (_event, status) => callback(status)),
+  onConnections: (callback) => ipcRenderer.on('tunnel:connections', (_event, connections) => callback(connections)),
   onInstallLog: (callback) => ipcRenderer.on('cloudflared:install-log', (_event, message) => callback(message)),
   onAuthUrl: (callback) => ipcRenderer.on('tunnel:auth-url', (_event, payload) => callback(payload))
 });

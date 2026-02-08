@@ -34,7 +34,123 @@ function runVersionCheck(exePath) {
   });
 }
 
-async function probeCloudflared(preferredPath) {
+function managedBinaryName() {
+  return process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared';
+}
+
+function buildSideBySideName() {
+  const filename = managedBinaryName();
+  const ext = path.extname(filename);
+  const base = ext ? filename.slice(0, -ext.length) : filename;
+  const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return `${base}-${suffix}${ext}`;
+}
+
+function isBusyFileError(err) {
+  if (!err || !err.code) return false;
+  return err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'ETXTBSY';
+}
+
+function listManagedBinaries(installDir) {
+  if (!installDir || !fs.existsSync(installDir)) return [];
+  const filename = managedBinaryName();
+  const ext = path.extname(filename);
+  const base = ext ? filename.slice(0, -ext.length) : filename;
+
+  const entries = fs.readdirSync(installDir, { withFileTypes: true })
+    .filter((entry) => {
+      if (!entry.isFile()) return false;
+      if (entry.name === filename) return true;
+      if (!entry.name.startsWith(`${base}-`)) return false;
+      if (ext && !entry.name.endsWith(ext)) return false;
+      return true;
+    })
+    .map((entry) => {
+      const fullPath = path.join(installDir, entry.name);
+      let mtimeMs = 0;
+      try {
+        mtimeMs = fs.statSync(fullPath).mtimeMs;
+      } catch (_) {
+        mtimeMs = 0;
+      }
+      return { fullPath, mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .map((item) => item.fullPath);
+
+  return entries;
+}
+
+async function probeManagedBinary(installDir) {
+  const candidates = listManagedBinaries(installDir);
+  if (candidates.length === 0) {
+    return { ok: false, reason: 'not_found' };
+  }
+
+  let lastOutput = '';
+  for (const candidate of candidates) {
+    const result = await runVersionCheck(candidate);
+    if (result.ok) {
+      return { ok: true, path: candidate, version: result.output, managed: true };
+    }
+    if (result.output) {
+      lastOutput = result.output;
+    }
+  }
+
+  return {
+    ok: false,
+    reason: 'invalid',
+    error: 'Managed cloudflared binary failed to run',
+    output: lastOutput
+  };
+}
+
+function moveBinaryIntoInstallDir(sourcePath, installDir, onLog) {
+  const targetPath = path.join(installDir, managedBinaryName());
+
+  try {
+    if (process.platform === 'win32' && fs.existsSync(targetPath)) {
+      fs.unlinkSync(targetPath);
+    }
+    fs.renameSync(sourcePath, targetPath);
+    return targetPath;
+  } catch (err) {
+    if (!isBusyFileError(err)) {
+      throw err;
+    }
+    const fallbackPath = path.join(installDir, buildSideBySideName());
+    fs.renameSync(sourcePath, fallbackPath);
+    logLine(onLog, `cloudflared binary is busy; installed side-by-side at ${fallbackPath}`);
+    return fallbackPath;
+  }
+}
+
+function safeRemoveFile(filePath) {
+  if (!filePath) return;
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (_) {
+    // ignore cleanup errors
+  }
+}
+
+function safeRemoveDir(dirPath) {
+  if (!dirPath) return;
+  try {
+    if (fs.existsSync(dirPath)) {
+      fs.rmSync(dirPath, { recursive: true, force: true });
+    }
+  } catch (_) {
+    // ignore cleanup errors
+  }
+}
+
+async function probeCloudflared(preferredPath, options = {}) {
+  const installDir = options && options.installDir ? String(options.installDir).trim() : '';
+
   if (preferredPath && preferredPath.trim()) {
     if (!fs.existsSync(preferredPath)) {
       return { ok: false, error: 'Configured cloudflared path not found' };
@@ -49,6 +165,18 @@ async function probeCloudflared(preferredPath) {
   const result = await runVersionCheck('cloudflared');
   if (result.ok) {
     return { ok: true, path: 'cloudflared', version: result.output };
+  }
+
+  let managedProbe = { ok: false, reason: 'not_found' };
+  if (installDir) {
+    managedProbe = await probeManagedBinary(installDir);
+    if (managedProbe.ok) {
+      return managedProbe;
+    }
+  }
+
+  if (managedProbe.reason === 'invalid') {
+    return { ok: false, error: managedProbe.error || 'Managed cloudflared binary failed to run', output: managedProbe.output || result.output };
   }
 
   return { ok: false, error: result.error || 'cloudflared not found in PATH', output: result.output };
@@ -241,6 +369,9 @@ function findBinary(destDir) {
 async function installCloudflared(installDir, options = {}) {
   const onLog = options.onLog;
   const requireChecksum = options.requireChecksum !== false;
+  let tmpPath = '';
+  let extractDir = '';
+
   try {
     fs.mkdirSync(installDir, { recursive: true });
     logLine(onLog, 'Fetching latest release info...');
@@ -255,7 +386,7 @@ async function installCloudflared(installDir, options = {}) {
 
     logLine(onLog, `Selected asset: ${asset.name}`);
 
-    const tmpPath = path.join(installDir, asset.name);
+    tmpPath = path.join(installDir, `${asset.name}.download-${Date.now().toString(36)}`);
     await downloadToFile(asset.browser_download_url, tmpPath, onLog);
 
     let expectedHash = extractDigestHash(asset);
@@ -267,15 +398,11 @@ async function installCloudflared(installDir, options = {}) {
       const checksumAsset = findChecksumAsset(assets, asset.name);
       if (checksumAsset) {
         logLine(onLog, 'Verifying checksum (checksum asset)...');
-        const checksumTextPath = path.join(installDir, checksumAsset.name);
+        const checksumTextPath = path.join(installDir, `${checksumAsset.name}.download-${Date.now().toString(36)}`);
         await downloadToFile(checksumAsset.browser_download_url, checksumTextPath, onLog);
         const checksumText = fs.readFileSync(checksumTextPath, 'utf8');
         expectedHash = extractChecksumForAsset(checksumText, asset.name) || parseChecksumText(checksumText);
-        try {
-          fs.unlinkSync(checksumTextPath);
-        } catch (_) {
-          // ignore cleanup errors
-        }
+        safeRemoveFile(checksumTextPath);
       }
     }
 
@@ -302,17 +429,21 @@ async function installCloudflared(installDir, options = {}) {
 
     if (asset.name.toLowerCase().endsWith('.tgz')) {
       logLine(onLog, 'Extracting archive...');
-      await extractTgz(tmpPath, installDir);
-      binaryPath = findBinary(installDir);
-      try {
-        fs.unlinkSync(tmpPath);
-      } catch (_) {
-        // ignore cleanup errors
+      extractDir = path.join(installDir, `.extract-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+      fs.mkdirSync(extractDir, { recursive: true });
+      await extractTgz(tmpPath, extractDir);
+      const extractedBinary = findBinary(extractDir);
+      if (!extractedBinary) {
+        return { ok: false, error: 'cloudflared binary not found in extracted archive' };
       }
+      binaryPath = moveBinaryIntoInstallDir(extractedBinary, installDir, onLog);
+      safeRemoveDir(extractDir);
+      extractDir = '';
+      safeRemoveFile(tmpPath);
+      tmpPath = '';
     } else {
-      const filename = process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared';
-      binaryPath = path.join(installDir, filename);
-      fs.renameSync(tmpPath, binaryPath);
+      binaryPath = moveBinaryIntoInstallDir(tmpPath, installDir, onLog);
+      tmpPath = '';
     }
 
     if (!binaryPath || !fs.existsSync(binaryPath)) {
@@ -326,6 +457,8 @@ async function installCloudflared(installDir, options = {}) {
     logLine(onLog, `Installed to ${binaryPath}`);
     return { ok: true, path: binaryPath };
   } catch (err) {
+    safeRemoveFile(tmpPath);
+    safeRemoveDir(extractDir);
     return { ok: false, error: err.message };
   }
 }

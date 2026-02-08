@@ -2,9 +2,16 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { extractZeroTrustUrls } = require('./zerotrust');
+const { formatLocalBind } = require('./validation');
 
-let tunnelProcess = null;
+let runtimeConfig = null;
+let lifecycleHandlers = null;
+let connections = [];
 let logStream = null;
+let authBuffer = '';
+let authUrls = new Set();
+let allStoppedNotified = false;
+let nextConnectionId = 1;
 
 function rotateLogIfNeeded(logFile, settings) {
   if (!settings || !settings.rotateLogs) return;
@@ -36,16 +43,44 @@ function ensureDir(dirPath) {
   }
 }
 
-function buildArgs(config) {
+function isRunning() {
+  return connections.some((item) => item.running);
+}
+
+function hasRuntime() {
+  return Boolean(runtimeConfig);
+}
+
+function listConnections() {
+  return connections.map((item) => ({
+    id: item.id,
+    hostname: item.hostname,
+    localBind: item.localBind,
+    autoAssigned: Boolean(item.autoAssigned),
+    running: Boolean(item.running),
+    pid: item.pid || null,
+    startedAt: item.startedAt || '',
+    lastExitCode: Number.isInteger(item.lastExitCode) ? item.lastExitCode : null,
+    lastExitSignal: item.lastExitSignal || '',
+    lastError: item.lastError || ''
+  }));
+}
+
+function emitConnections() {
+  if (!lifecycleHandlers || !lifecycleHandlers.onConnections) return;
+  lifecycleHandlers.onConnections(listConnections());
+}
+
+function buildArgs(target, logLevel) {
   const args = [
     'access',
     'tcp',
     '--hostname',
-    config.hostname,
+    target.hostname,
     '--url',
-    config.localBind
+    target.localBind
   ];
-  const level = String(config.logLevel || '').trim();
+  const level = String(logLevel || '').trim();
   if (level && level !== 'auto') {
     args.push('--loglevel', level);
   }
@@ -54,23 +89,186 @@ function buildArgs(config) {
 
 function writeHeader(config) {
   if (!logStream) return;
+  const targets = Array.isArray(config.targets) ? config.targets : [];
   const lines = [
     '===== ' + new Date().toISOString() + ' =====',
-    `[*] Hostname: ${config.hostname}`,
-    `[*] Local   : ${config.localBind}`,
+    `[*] Connections: ${targets.length}`,
+    ...targets.map((target, index) => {
+      const suffix = target.autoAssigned ? ' (auto)' : '';
+      return `[*] ${index + 1}. ${target.hostname} -> ${target.localBind}${suffix}`;
+    }),
     `[*] Log     : ${config.logFile}`,
     ''
   ];
   logStream.write(lines.join('\n') + '\n');
 }
 
-function startTunnel(config, handlers) {
-  if (tunnelProcess) {
-    return { ok: false, error: 'Tunnel is already running' };
+function writeEventLine(text) {
+  if (!logStream) return;
+  logStream.write(`[${new Date().toISOString()}] ${text}\n`);
+}
+
+function openLogStreamIfNeeded() {
+  if (logStream || !runtimeConfig || !runtimeConfig.logFile) return;
+  const logFile = runtimeConfig.logFile;
+  const logDir = path.dirname(logFile);
+  ensureDir(logDir);
+  rotateLogIfNeeded(logFile, runtimeConfig.settings);
+  logStream = fs.createWriteStream(logFile, { flags: 'a' });
+}
+
+function closeLogStream() {
+  if (!logStream) return;
+  logStream.end();
+  logStream = null;
+}
+
+function prefixLines(text, prefix) {
+  const lines = String(text || '').split('\n');
+  return lines
+    .map((line) => (line ? `[${prefix}] ${line}` : line))
+    .join('\n');
+}
+
+function resetRuntimeState() {
+  runtimeConfig = null;
+  lifecycleHandlers = null;
+  connections = [];
+  authBuffer = '';
+  authUrls = new Set();
+  allStoppedNotified = false;
+  closeLogStream();
+}
+
+function connectionKey(item) {
+  if (!item || !item.hostname || !item.localBind) return '';
+  return `${item.hostname}|${item.localBind}`;
+}
+
+function createConnectionRecord(target) {
+  return {
+    id: `c-${nextConnectionId++}`,
+    hostname: target.hostname,
+    localBind: target.localBind,
+    host: target.host,
+    port: target.port,
+    autoAssigned: Boolean(target.autoAssigned),
+    proc: null,
+    running: false,
+    pid: null,
+    startedAt: '',
+    lastExitCode: null,
+    lastExitSignal: '',
+    lastError: ''
+  };
+}
+
+function handleAuthUrls(text) {
+  if (!lifecycleHandlers || !lifecycleHandlers.onAuthUrl) return;
+  authBuffer = (authBuffer + text).slice(-4096);
+  const found = extractZeroTrustUrls(authBuffer);
+  found.forEach((url) => {
+    if (authUrls.has(url)) return;
+    authUrls.add(url);
+    lifecycleHandlers.onAuthUrl(url);
+  });
+}
+
+function notifyAllStopped(info) {
+  if (allStoppedNotified || isRunning()) return;
+  allStoppedNotified = true;
+  closeLogStream();
+  if (lifecycleHandlers && lifecycleHandlers.onExit) {
+    lifecycleHandlers.onExit(info || {});
+  }
+}
+
+function spawnConnection(connection) {
+  if (!runtimeConfig) {
+    return { ok: false, error: 'Tunnel is not configured' };
+  }
+  if (connection.running) {
+    return { ok: false, error: 'Connection is already running' };
   }
 
-  if (!config.hostname || !config.localBind || !config.logLevel || !config.logFile) {
-    return { ok: false, error: 'Hostname, local bind, log level, and log file are required' };
+  openLogStreamIfNeeded();
+  allStoppedNotified = false;
+
+  const args = buildArgs(connection, runtimeConfig.logLevel);
+  const proc = spawn(runtimeConfig.exePath, args, { windowsHide: true });
+
+  connection.proc = proc;
+  connection.running = true;
+  connection.pid = Number.isInteger(proc.pid) ? proc.pid : null;
+  connection.startedAt = new Date().toISOString();
+  connection.lastExitCode = null;
+  connection.lastExitSignal = '';
+  connection.lastError = '';
+
+  writeEventLine(`Connection start: ${connection.hostname} -> ${connection.localBind}`);
+  emitConnections();
+
+  const usePrefix = connections.length > 1 ? connection.hostname : '';
+  const onData = (chunk) => {
+    const text = chunk.toString();
+    handleAuthUrls(text);
+    const rendered = usePrefix ? prefixLines(text, usePrefix) : text;
+    if (logStream) logStream.write(rendered);
+    if (lifecycleHandlers && lifecycleHandlers.onLog) {
+      lifecycleHandlers.onLog(rendered);
+    }
+  };
+
+  proc.stdout.on('data', onData);
+  proc.stderr.on('data', onData);
+
+  proc.on('error', (err) => {
+    connection.running = false;
+    connection.proc = null;
+    connection.pid = null;
+    connection.lastError = err && err.message ? err.message : 'Process error';
+    writeEventLine(`Connection error: ${connection.hostname} -> ${connection.lastError}`);
+    if (lifecycleHandlers && lifecycleHandlers.onLog) {
+      lifecycleHandlers.onLog(`Process error (${connection.hostname}): ${connection.lastError}\n`);
+    }
+    emitConnections();
+    notifyAllStopped({
+      code: null,
+      signal: 'error',
+      error: connection.lastError,
+      hostname: connection.hostname,
+      connectionId: connection.id
+    });
+  });
+
+  proc.on('close', (code, signal) => {
+    connection.running = false;
+    connection.proc = null;
+    connection.pid = null;
+    connection.lastExitCode = Number.isInteger(code) ? code : null;
+    connection.lastExitSignal = signal || '';
+    const bindInfo = formatLocalBind(connection);
+    const closedLine = `Connection closed: ${connection.hostname} -> ${bindInfo || connection.localBind} (code=${code}, signal=${signal || 'none'})`;
+    writeEventLine(closedLine);
+    if (lifecycleHandlers && lifecycleHandlers.onLog) {
+      lifecycleHandlers.onLog(`${closedLine}\n`);
+    }
+    emitConnections();
+    notifyAllStopped({
+      code,
+      signal,
+      hostname: connection.hostname,
+      connectionId: connection.id
+    });
+  });
+
+  return { ok: true, pid: connection.pid };
+}
+
+function startTunnel(config, handlers) {
+  const targets = Array.isArray(config.targets) ? config.targets.filter((item) => item && item.hostname && item.localBind) : [];
+  if (targets.length === 0 || !config.logLevel || !config.logFile) {
+    return { ok: false, error: 'At least one hostname, log level, and log file are required' };
   }
 
   try {
@@ -85,84 +283,119 @@ function startTunnel(config, handlers) {
     ? config.cloudflaredPath.trim()
     : 'cloudflared';
 
-  const logDir = path.dirname(config.logFile);
-  ensureDir(logDir);
-  rotateLogIfNeeded(config.logFile, config.settings);
-  logStream = fs.createWriteStream(config.logFile, { flags: 'a' });
-  writeHeader(config);
+  if (hasRuntime() && !isRunning()) {
+    resetRuntimeState();
+  }
 
-  let authBuffer = '';
-  const authUrls = new Set();
-  const maxAuthBuffer = 4096;
+  const isAppending = hasRuntime();
+  if (!isAppending) {
+    runtimeConfig = {
+      exePath,
+      logLevel: config.logLevel,
+      logFile: config.logFile,
+      settings: config.settings || {}
+    };
+    lifecycleHandlers = handlers || null;
+    connections = [];
+    openLogStreamIfNeeded();
+    writeHeader({ ...config, targets });
+  } else {
+    if (runtimeConfig.exePath !== exePath) {
+      return { ok: false, error: 'Tunnel is already running with a different cloudflared binary. Stop all connections before switching binary.' };
+    }
+    if (runtimeConfig.logFile !== config.logFile) {
+      return { ok: false, error: 'Tunnel is already running with a different log file. Stop all connections before switching log file.' };
+    }
+    if (runtimeConfig.logLevel !== config.logLevel) {
+      return { ok: false, error: 'Tunnel is already running with a different log level. Stop all connections before changing log level.' };
+    }
+    runtimeConfig.settings = config.settings || runtimeConfig.settings;
+    lifecycleHandlers = handlers || lifecycleHandlers;
+    openLogStreamIfNeeded();
+  }
 
-  const handleAuthUrls = (text) => {
-    if (!handlers || !handlers.onAuthUrl) return;
-    authBuffer = (authBuffer + text).slice(-maxAuthBuffer);
-    const found = extractZeroTrustUrls(authBuffer);
-    found.forEach((url) => {
-      if (authUrls.has(url)) return;
-      authUrls.add(url);
-      handlers.onAuthUrl(url);
-    });
-  };
+  const pids = [];
 
-  const args = buildArgs(config);
-  const proc = spawn(exePath, args, { windowsHide: true });
-  tunnelProcess = proc;
+  targets.forEach((target) => {
+    const key = connectionKey(target);
+    const existing = key ? connections.find((item) => connectionKey(item) === key) : null;
+    if (existing) {
+      if (existing.running) return;
+      const restarted = spawnConnection(existing);
+      if (restarted.ok && Number.isInteger(restarted.pid)) {
+        pids.push(restarted.pid);
+      }
+      return;
+    }
 
-  const onData = (chunk) => {
-    const text = chunk.toString();
-    handleAuthUrls(text);
-    if (logStream) logStream.write(text);
-    if (handlers && handlers.onLog) handlers.onLog(text);
-  };
-
-  proc.stdout.on('data', onData);
-  proc.stderr.on('data', onData);
-
-  proc.on('error', (err) => {
-    if (handlers && handlers.onLog) handlers.onLog(`Process error: ${err.message}\n`);
-    if (handlers && handlers.onExit) handlers.onExit({ code: null, signal: 'error', error: err.message });
-    cleanup();
+    const connection = createConnectionRecord(target);
+    connections.push(connection);
+    const started = spawnConnection(connection);
+    if (started.ok && Number.isInteger(started.pid)) {
+      pids.push(started.pid);
+    }
   });
 
-  proc.on('close', (code, signal) => {
-    if (handlers && handlers.onExit) handlers.onExit({ code, signal });
-    cleanup();
-  });
-
-  return { ok: true, pid: proc.pid };
+  return {
+    ok: true,
+    pids,
+    targets: connections.map((connection) => ({
+      hostname: connection.hostname,
+      localBind: connection.localBind,
+      autoAssigned: Boolean(connection.autoAssigned)
+    })),
+    connections: listConnections()
+  };
 }
 
-function cleanup() {
-  tunnelProcess = null;
-  if (logStream) {
-    logStream.end();
-    logStream = null;
+function startConnection(connectionId) {
+  const connection = connections.find((item) => item.id === connectionId);
+  if (!connection) {
+    return { ok: false, error: 'Connection not found' };
   }
+  const started = spawnConnection(connection);
+  if (!started.ok) return started;
+  return { ok: true, connection: listConnections().find((item) => item.id === connectionId) || null };
+}
+
+function stopConnection(connectionId) {
+  const connection = connections.find((item) => item.id === connectionId);
+  if (!connection) {
+    return { ok: false, error: 'Connection not found' };
+  }
+  if (!connection.running || !connection.proc || !connection.proc.pid) {
+    return { ok: false, error: 'Connection is not running' };
+  }
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/PID', String(connection.proc.pid), '/T', '/F'], { windowsHide: true });
+  } else {
+    connection.proc.kill('SIGTERM');
+  }
+  return { ok: true };
 }
 
 function stopTunnel() {
-  if (!tunnelProcess) {
+  const running = connections.filter((item) => item.running && item.proc && item.proc.pid);
+  if (running.length === 0) {
     return { ok: false, error: 'Tunnel is not running' };
   }
 
-  const pid = tunnelProcess.pid;
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
-  } else {
-    tunnelProcess.kill('SIGTERM');
-  }
+  running.forEach((connection) => {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/PID', String(connection.proc.pid), '/T', '/F'], { windowsHide: true });
+    } else {
+      connection.proc.kill('SIGTERM');
+    }
+  });
 
   return { ok: true };
 }
 
-function isRunning() {
-  return Boolean(tunnelProcess);
-}
-
 module.exports = {
+  listConnections,
+  startConnection,
   startTunnel,
+  stopConnection,
   stopTunnel,
   isRunning
 };
