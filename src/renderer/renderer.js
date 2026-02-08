@@ -134,7 +134,7 @@ function setCloudflaredStatus(text, status) {
 }
 
 function setRunningState(isRunning) {
-  elements.startBtn.disabled = false;
+  elements.startBtn.disabled = startTunnelPending;
   elements.stopBtn.disabled = !isRunning;
 }
 
@@ -502,11 +502,11 @@ elements.connectionList.addEventListener('click', async (event) => {
       if (result.details) {
         appendLog(`${result.details}\n`);
       }
+      button.disabled = false;
     } else {
       appendLog('Connection started.\n');
-      if (Array.isArray(result.connections)) {
-        renderConnections(result.connections);
-      }
+      const connections = Array.isArray(result.connections) ? result.connections : await window.api.listConnections();
+      renderConnections(connections);
     }
     return;
   }
@@ -515,11 +515,11 @@ elements.connectionList.addEventListener('click', async (event) => {
     const result = await window.api.stopConnection(connectionId);
     if (!result.ok) {
       appendLog(`Stop connection failed: ${result.error || 'unknown error'}\n`);
+      button.disabled = false;
     } else {
       appendLog('Connection stopping...\n');
-      if (Array.isArray(result.connections)) {
-        renderConnections(result.connections);
-      }
+      const connections = Array.isArray(result.connections) ? result.connections : await window.api.listConnections();
+      renderConnections(connections);
     }
   }
 });

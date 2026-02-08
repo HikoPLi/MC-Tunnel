@@ -150,36 +150,56 @@ function safeRemoveDir(dirPath) {
 
 async function probeCloudflared(preferredPath, options = {}) {
   const installDir = options && options.installDir ? String(options.installDir).trim() : '';
+  const preferred = String(preferredPath || '').trim();
+  let preferredFailure = null;
 
-  if (preferredPath && preferredPath.trim()) {
-    if (!fs.existsSync(preferredPath)) {
-      return { ok: false, error: 'Configured cloudflared path not found' };
+  if (preferred) {
+    if (!fs.existsSync(preferred)) {
+      preferredFailure = { error: 'Configured cloudflared path not found', output: '' };
+    } else {
+      const result = await runVersionCheck(preferred);
+      if (result.ok) {
+        return { ok: true, path: preferred, version: result.output };
+      }
+      preferredFailure = {
+        error: result.error || 'Configured cloudflared failed to run',
+        output: result.output
+      };
     }
-    const result = await runVersionCheck(preferredPath);
-    if (result.ok) {
-      return { ok: true, path: preferredPath, version: result.output };
-    }
-    return { ok: false, error: result.error || 'cloudflared failed to run', output: result.output };
   }
 
-  const result = await runVersionCheck('cloudflared');
-  if (result.ok) {
-    return { ok: true, path: 'cloudflared', version: result.output };
+  const pathProbe = await runVersionCheck('cloudflared');
+  if (pathProbe.ok) {
+    if (preferredFailure) {
+      return { ok: true, path: 'cloudflared', version: pathProbe.output, warning: preferredFailure.error };
+    }
+    return { ok: true, path: 'cloudflared', version: pathProbe.output };
   }
 
   let managedProbe = { ok: false, reason: 'not_found' };
   if (installDir) {
     managedProbe = await probeManagedBinary(installDir);
     if (managedProbe.ok) {
+      if (preferredFailure) {
+        return { ...managedProbe, warning: preferredFailure.error };
+      }
       return managedProbe;
     }
   }
 
-  if (managedProbe.reason === 'invalid') {
-    return { ok: false, error: managedProbe.error || 'Managed cloudflared binary failed to run', output: managedProbe.output || result.output };
+  if (preferredFailure) {
+    return {
+      ok: false,
+      error: preferredFailure.error,
+      output: preferredFailure.output || pathProbe.output || managedProbe.output || ''
+    };
   }
 
-  return { ok: false, error: result.error || 'cloudflared not found in PATH', output: result.output };
+  if (managedProbe.reason === 'invalid') {
+    return { ok: false, error: managedProbe.error || 'Managed cloudflared binary failed to run', output: managedProbe.output || pathProbe.output };
+  }
+
+  return { ok: false, error: pathProbe.error || 'cloudflared not found in PATH', output: pathProbe.output };
 }
 
 function fetchJson(url, onLog) {
