@@ -40,6 +40,17 @@ MC Tunnel UI is a cross-platform Electron desktop app for running Cloudflare Acc
 - Log persistence, rotation, and quick file/folder access from UI.
 - Config import/export and profile management.
 
+## Operational Guarantees
+
+- `Start tunnel` is never permanently disabled by running state. It is disabled only while one start request is in flight.
+- Existing running connections are preserved when appending new hosts.
+- Omitted local bind entries are auto-assigned to available local ports, without overriding explicit bind entries.
+- cloudflared resolution and reuse follows a deterministic order:
+  1. Configured binary path.
+  2. `cloudflared` in `PATH`.
+  3. Managed binaries under app `userData/bin`.
+- If managed binary replacement is blocked by file occupancy, install falls back to side-by-side naming and continues.
+
 ## Safety Model
 
 - No implicit hostname generation.
@@ -49,6 +60,8 @@ MC Tunnel UI is a cross-platform Electron desktop app for running Cloudflare Acc
 - Optional checksum enforcement for downloaded cloudflared assets.
 
 ## Screenshots
+
+Updated UI demo (2026-02-08):
 
 ![Demo 1](demo.png)
 ![Demo 2](demo2.png)
@@ -143,6 +156,17 @@ For detailed architecture/security discussion, see `WHITEPAPER.md`.
 
 - `Start tunnel` remains available for incremental host start.
 - During one in-flight start request, repeated rapid clicks are ignored to avoid duplicate requests.
+
+## Manual Smoke Test (Maintainers)
+
+1. Launch app with `npm run start`.
+2. Load a profile containing at least 2 hostnames and one empty local bind entry.
+3. Click `Start tunnel`; verify at least one connection shows `auto-assigned`.
+4. While first connection is running, add another hostname and click `Start tunnel` again.
+5. Verify the new connection appears without stopping existing ones.
+6. Use per-connection `Stop` and `Start` to confirm independent control.
+7. Run `Check` for cloudflared and verify path reuse on restart.
+8. Trigger `Install/Update` and verify status/log output is actionable.
 
 ## Development
 

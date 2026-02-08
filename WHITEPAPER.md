@@ -40,12 +40,12 @@
 ## 组件模型 / Component model
 | 中文 | English |
 | --- | --- |
-| <ul><li>配置档管理：保存显式隧道设置（hostname、bind、日志配置、cloudflared 路径）。</li><li>保存链接：仅保存 hostname + bind，便于快速使用。</li><li>预检：在启动前验证端口可用性与二进制基本健康。</li><li>Cloudflared 管理：验证现有二进制或拉取对应 OS/CPU 的版本。</li><li>日志子系统：采集进程输出、轮转日志并提供日志位置。</li></ul> | <ul><li>Profile manager: stores explicit tunnel settings (hostname, bind, log config, cloudflared path).</li><li>Saved links: stores only hostname + bind pairs for quick setup.</li><li>Preflight checks: verifies port availability and basic binary health before launch.</li><li>Cloudflared management: verifies an existing binary or fetches a release for the current OS/CPU.</li><li>Logging subsystem: captures process output, rotates logs, and exposes log locations.</li></ul> |
+| <ul><li>配置档管理：保存显式隧道设置（hostname 列表、bind 列表、日志配置、cloudflared 路径）。</li><li>保存链接：保存多 host 输入，便于快速复用。</li><li>连接编排：支持增量启动；已运行连接保持不受影响。</li><li>连接控制列表：每个 hostname + bind 连接可单独 Start/Stop。</li><li>预检：在启动前验证端口可用性与二进制基本健康。</li><li>Cloudflared 管理：优先复用现有可执行文件，必要时下载并在占用场景下侧装。</li><li>日志子系统：采集进程输出、轮转日志并提供日志位置。</li></ul> | <ul><li>Profile manager: stores explicit tunnel settings (hostname list, bind list, log config, cloudflared path).</li><li>Saved links: persist multi-host inputs for quick reuse.</li><li>Connection orchestration: supports incremental starts while existing running connections remain unaffected.</li><li>Connection control list: each hostname + bind connection can be started/stopped independently.</li><li>Preflight checks: verifies port availability and basic binary health before launch.</li><li>Cloudflared management: reuses an existing executable first, and installs a managed binary with side-by-side fallback if the target is busy.</li><li>Logging subsystem: captures process output, rotates logs, and exposes log locations.</li></ul> |
 
 ## 数据流（高层） / Data flow (high level)
 | 中文 | English |
 | --- | --- |
-| <ol><li>用户选择保存链接或配置档。</li><li>预检校验端口可用性与二进制健康。</li><li>应用使用显式参数启动 cloudflared。</li><li>日志输出到 UI 并落盘保存。</li><li>用户停止隧道；日志与状态被更新。</li></ol> | <ol><li>User selects a saved link or profile.</li><li>Preflight checks validate port availability and binary health.</li><li>The app launches cloudflared with explicit parameters.</li><li>Logs are streamed to the UI and persisted to disk.</li><li>User stops the tunnel; logs and state are updated.</li></ol> |
+| <ol><li>用户输入一个或多个 hostname；local bind 可显式填写或留空（留空代表允许自动分配）。</li><li>预检校验 cloudflared 与自定义 bind；自动 bind 路径会挑选未占用端口。</li><li>应用按 `hostname + bind` 启动连接，并将新连接追加到运行时列表。</li><li>每条连接在 UI 列表中独立展示与控制（Start/Stop）。</li><li>日志输出到 UI 并落盘保存；全部连接停止后更新全局状态。</li></ol> | <ol><li>User provides one or more hostnames; local bind can be explicit or left blank (blank means auto-allocation is allowed).</li><li>Preflight validates cloudflared and custom binds; auto-bind flow picks an unoccupied port.</li><li>The app starts connections by `hostname + bind` and appends new ones to the runtime list.</li><li>Each connection is shown and controlled independently in the UI list (`Start`/`Stop`).</li><li>Logs are streamed to UI and disk; global status is updated when all connections stop.</li></ol> |
 
 ## 安全模型 / Security model
 ### 资产 / Assets
@@ -61,12 +61,12 @@
 ### 威胁与缓解 / Threats and mitigations
 | 中文 | English |
 | --- | --- |
-| <ul><li>误配置导致暴露：通过显式输入与无自动填充默认值缓解。</li><li>端口冲突或被占用：通过预检与终止确认缓解。</li><li>cloudflared 二进制被篡改：通过可选校验和验证缓解。</li><li>日志泄露敏感信息：避免记录凭据并提醒避免含 Token 的 URL。</li></ul> | <ul><li>Misconfiguration leading to exposure: mitigated by explicit inputs and no auto-filled defaults.</li><li>Port conflicts or hijacking: mitigated by preflight checks and confirmation before termination.</li><li>Tampered cloudflared binary: mitigated by optional checksum enforcement.</li><li>Log leakage of sensitive info: mitigated by avoiding credentials and warning against tokenized URLs.</li></ul> |
+| <ul><li>误配置导致暴露：通过显式输入、无隐式 hostname 与无静默回退缓解。</li><li>端口冲突或被占用：通过预检、冲突提示与可确认终止流程缓解。</li><li>重复触发启动导致状态混乱：UI 仅在请求进行中短暂禁用 Start，避免重复请求。</li><li>cloudflared 二进制被篡改：通过可选校验和验证缓解。</li><li>cloudflared 二进制被占用导致更新失败：使用侧装文件名回退，避免更新中断。</li><li>日志泄露敏感信息：避免记录凭据并提醒避免含 Token 的 URL。</li></ul> | <ul><li>Misconfiguration leading to exposure: mitigated by explicit inputs, no implicit hostnames, and no silent fallbacks.</li><li>Port conflicts or hijacking: mitigated by preflight checks, conflict reporting, and confirmed termination flow.</li><li>State confusion from duplicate start triggers: UI only disables Start during in-flight requests to prevent duplicate launches.</li><li>Tampered cloudflared binary: mitigated by optional checksum enforcement.</li><li>cloudflared update failure due to busy binary: mitigated by side-by-side install fallback naming.</li><li>Log leakage of sensitive info: mitigated by avoiding credentials and warning against tokenized URLs.</li></ul> |
 
 ## 安全控制 / Safety controls
 | 中文 | English |
 | --- | --- |
-| <ul><li>启动前必须显式配置。</li><li>启动前执行端口预检。</li><li>破坏性操作需确认（结束占用端口的进程）。</li><li>日志轮转与限制，避免磁盘耗尽。</li><li>可选下载校验和强制。</li></ul> | <ul><li>Explicit configuration required before start.</li><li>Preflight port checks before process launch.</li><li>Confirmations for disruptive actions (killing a process on a port).</li><li>Log rotation and limits to avoid disk exhaustion.</li><li>Optional checksum enforcement for downloads.</li></ul> |
+| <ul><li>启动前必须显式配置。</li><li>支持多 Host 增量启动，不覆盖已有运行连接。</li><li>启动前执行端口预检；无自定义 bind 时自动分配空闲端口。</li><li>破坏性操作需确认（结束占用端口的进程）。</li><li>全局 Start 仅在 in-flight 请求期间禁用，避免“已运行即永久禁用”。</li><li>日志轮转与限制，避免磁盘耗尽。</li><li>可选下载校验和强制。</li></ul> | <ul><li>Explicit configuration is required before start.</li><li>Supports incremental multi-host starts without replacing existing running connections.</li><li>Performs preflight checks for explicit binds and auto-allocates a free local port when bind is omitted.</li><li>Destructive actions require confirmation (killing a process on a port).</li><li>Global Start is disabled only during in-flight requests, preventing the “permanently disabled while running” issue.</li><li>Log rotation and limits help avoid disk exhaustion.</li><li>Optional checksum enforcement is available for downloads.</li></ul> |
 
 ## 隐私与数据处理 / Privacy and data handling
 | 中文 | English |
@@ -76,7 +76,7 @@
 ## 运行模型 / Operational model
 | 中文 | English |
 | --- | --- |
-| <ul><li>通过平台打包或开发脚本安装。</li><li>更新通过发布流程与打包产物管理。</li><li>用户完全控制隧道启停。</li></ul> | <ul><li>Installation is performed via platform packaging or development scripts.</li><li>Updates are managed via the release process and packaged artifacts.</li><li>The user controls when to start or stop the tunnel.</li></ul> |
+| <ul><li>通过平台打包或开发脚本安装。</li><li>更新通过发布流程与打包产物管理。</li><li>cloudflared 探测优先级：配置路径 > PATH > 托管目录（`userData/bin`）。</li><li>macOS/Windows/Linux 均复用托管 cloudflared，避免每次启动重复下载。</li><li>当目标二进制占用无法覆盖时，采用侧装命名并继续安装。</li><li>用户完全控制全局隧道和单连接启停。</li></ul> | <ul><li>Installation is performed via platform packaging or development scripts.</li><li>Updates are managed via the release process and packaged artifacts.</li><li>cloudflared probe priority is: configured path > PATH > managed directory (`userData/bin`).</li><li>Managed cloudflared binaries are reused across macOS/Windows/Linux launches to avoid repeated downloads.</li><li>If the target binary is busy and cannot be replaced, installation falls back to side-by-side naming.</li><li>The user controls both global tunnel lifecycle and per-connection start/stop.</li></ul> |
 
 ## 端到端使用指南 / End-to-end usage guide
 本节提供完整、安全的流程：主机侧 Cloudflare 配置与客户端 MC Tunnel UI 设置。
@@ -94,7 +94,7 @@
 ### 步骤 2：客户端使用 MC Tunnel UI / Step 2: Client-side setup with MC Tunnel UI
 | 中文 | English |
 | --- | --- |
-| <ol><li>使用 Check 或 Install 确保 cloudflared 可用。</li><li>创建配置档或保存链接：<ul><li>Hostname：Access 应用的 hostname（示例：mc.example.com）。</li><li>Local bind：本地 TCP 监听地址（示例：127.0.0.1:PORT）。</li></ul></li><li>点击 Start。cloudflared 输出 Access URL 后打开并完成认证。</li><li>将 Minecraft 客户端指向本地 bind 地址。</li></ol> | <ol><li>Use Check or Install to ensure cloudflared is available.</li><li>Create a profile or saved link:<ul><li>Hostname: the Access application hostname (example: mc.example.com).</li><li>Local bind: the local TCP listener (example: 127.0.0.1:PORT).</li></ul></li><li>Click Start. When cloudflared prints an Access URL, open it and finish authentication.</li><li>Point your Minecraft client to the local bind address.</li></ol> |
+| <ol><li>使用 Check 或 Install 确保 cloudflared 可用（优先复用已有路径）。</li><li>创建配置档或保存链接：<ul><li>Hostname：支持多个（逗号/换行分隔）。</li><li>Local bind：可选；可逐项填写，留空项将自动分配可用端口。</li></ul></li><li>点击 Start tunnel；已运行连接不会阻止追加启动其他 host。</li><li>在连接列表中按需逐条 Start/Stop。</li><li>将 Minecraft 客户端指向对应本地 bind 地址。</li></ol> | <ol><li>Use Check or Install to ensure cloudflared is available (existing paths are reused first).</li><li>Create a profile or saved link:<ul><li>Hostname: supports multiple entries (comma/newline separated).</li><li>Local bind: optional; explicit per-entry binds are supported, and blank entries are auto-assigned to available ports.</li></ul></li><li>Click `Start tunnel`; existing running connections do not block appending new hosts.</li><li>Use the connection list to start/stop each entry independently.</li><li>Point Minecraft clients to the corresponding local bind addresses.</li></ol> |
 
 ### 界面示意 / UI walkthrough
 ![Demo 1](demo.png)
@@ -108,7 +108,7 @@
 ### 运行检查 / Operational checks
 | 中文 | English |
 | --- | --- |
-| <ul><li>确保主机与客户端的 cloudflared 能正常访问外网 80/443。</li><li>主机侧隧道必须保持运行，停止会导致客户端不可达。</li><li>使用应用的端口预检避免绑定冲突。</li></ul> | <ul><li>Ensure outbound 80/443 is allowed for cloudflared on both host and client.</li><li>Keep the host-side tunnel running; stopping it breaks client access.</li><li>Use the app's preflight port check to avoid binding conflicts.</li></ul> |
+| <ul><li>确保主机与客户端的 cloudflared 能正常访问外网 80/443。</li><li>主机侧隧道必须保持运行，停止会导致客户端不可达。</li><li>显式 bind 使用端口预检；未填 bind 由应用自动分配空闲端口。</li><li>若更新 cloudflared 时提示文件占用，应用会使用侧装文件名完成安装。</li></ul> | <ul><li>Ensure outbound 80/443 is allowed for cloudflared on both host and client.</li><li>Keep the host-side tunnel running; stopping it breaks client access.</li><li>Explicit binds use preflight checks; omitted binds are auto-assigned to free ports.</li><li>If cloudflared update reports a busy file, the app completes install via side-by-side binary naming.</li></ul> |
 
 ### 参考命令（示例） / Reference commands (example)
 ```bash
@@ -122,13 +122,15 @@ cloudflared access tcp --hostname mc.example.com --url localhost:25565
 | --- | --- | --- |
 | 绑定地址错误<br>Incorrect bind address | 隧道失败或暴露错误服务<br>Tunnel fails or exposes wrong service | 显式输入、预检<br>Explicit inputs, preflight checks |
 | 端口已占用<br>Port already in use | 启动失败或卡住<br>Start failure or app hangs | 端口预检、用户确认<br>Port precheck, user prompt |
+| 重复触发启动<br>Repeated start trigger | 重复请求与状态混乱<br>Duplicate requests and state confusion | in-flight 期间短暂禁用 Start<br>Disable Start only during in-flight requests |
+| 二进制文件被占用<br>Busy binary file | 更新失败<br>Update failure | 侧装命名回退安装<br>Side-by-side fallback naming |
 | 二进制被破坏<br>Corrupted binary | 不可预期行为<br>Unexpected behavior | 校验和验证<br>Checksum enforcement |
 | 日志过多<br>Excessive logs | 磁盘占用<br>Disk usage | 日志轮转限制<br>Log rotation limits |
 
 ## 限制 / Limitations
 | 中文 | English |
 | --- | --- |
-| <ul><li>应用依赖 cloudflared 提供网络安全属性与 Access 执行。</li><li>校验和能力取决于可用的校验元数据。</li><li>应用不校验 Cloudflare 侧的策略配置。</li></ul> | <ul><li>The app relies on cloudflared for network security properties and Access enforcement.</li><li>Checksums are only as strong as the availability of checksum metadata.</li><li>The app does not validate remote policy configuration in Cloudflare.</li></ul> |
+| <ul><li>应用依赖 cloudflared 提供网络安全属性与 Access 执行。</li><li>校验和能力取决于可用的校验元数据。</li><li>应用不校验 Cloudflare 侧的策略配置。</li><li>当运行时已使用某 cloudflared 路径时，切换到不同二进制需要先停止所有连接。</li></ul> | <ul><li>The app relies on cloudflared for network security properties and Access enforcement.</li><li>Checksums are only as strong as the availability of checksum metadata.</li><li>The app does not validate remote policy configuration in Cloudflare.</li><li>If runtime is already using one cloudflared path, switching to a different binary requires stopping all active connections first.</li></ul> |
 
 ## 未来工作 / Future work
 | 中文 | English |
